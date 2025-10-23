@@ -21,29 +21,67 @@ class Database:
 
     def __init__(self):
         cfg = DatabaseConfig()
-        self.dsn = (f"dbname={cfg.database} user={cfg.username.get_secret_value()} "
-                    f"password={cfg.password.get_secret_value()} "
-                    f"host={cfg.host} port={cfg.port}")
+        # Build connection string
+        dsn_parts = [
+            f"dbname={cfg.database}",
+            f"user={cfg.username.get_secret_value()}",
+            f"password={cfg.password.get_secret_value()}",
+            f"host={cfg.host}",
+            "sslmode=require"  # Required for cloud databases like Koyeb
+        ]
+        
+        # Only add port if it's explicitly specified in environment
+        if cfg.port is not None:
+            dsn_parts.append(f"port={cfg.port}")
+            
+        self.dsn = " ".join(dsn_parts)
         self.pool = None
 
     def __del__(self):
-        self.close()
+        # Note: close() is async, so we can't call it in __del__
+        # The pool will be cleaned up automatically
+        pass
 
-    async def connect(self) -> bool:
+    async def connect(self, retries: int = 3) -> bool:
         """
-        Connect to database
+        Connect to database with retry logic
+        :param retries: number of retry attempts
         :return: whether database connection was successful
         """
-        try:
-            self.pool = await aiopg.create_pool(self.dsn)
-        except psycopg2.OperationalError as e:
-            logger.logger.error(f"Database connection failed: %s", e)
-        except asyncio.TimeoutError:
-            logger.logger.error("Connection attempt timed out.")
-        except Exception as e:
-            logger.logger.error("ON CONNECTION: %s", e)
-
-        return self.pool is None
+        for attempt in range(retries):
+            try:
+                print(f"🔄 Database connection attempt {attempt + 1}/{retries}...")
+                self.pool = await aiopg.create_pool(self.dsn, timeout=30, minsize=1, maxsize=10)
+                logger.logger.info("Database connection pool created successfully")
+                print("✅ Database connected successfully!")
+                return True
+                
+            except psycopg2.OperationalError as e:
+                error_msg = str(e)
+                logger.logger.error(f"Database connection failed (attempt {attempt + 1}): {error_msg}")
+                
+                if "database" in error_msg and "does not exist" in error_msg:
+                    print(f"❌ Database 'spotify-payments' does not exist on the server")
+                    print("💡 You may need to create the database first or use a different name")
+                    break
+                elif "sslmode=require" in error_msg or "SSL" in error_msg:
+                    print(f"❌ SSL connection issue: {error_msg}")
+                    break
+                else:
+                    print(f"❌ Connection failed (attempt {attempt + 1}): {error_msg}")
+                    
+            except asyncio.TimeoutError:
+                logger.logger.error(f"Connection attempt {attempt + 1} timed out")
+                print(f"❌ Connection timed out (attempt {attempt + 1})")
+                
+            except Exception as e:
+                logger.logger.error(f"Connection error (attempt {attempt + 1}): {e}")
+                print(f"❌ Unexpected error (attempt {attempt + 1}): {e}")
+            
+            if attempt < retries - 1:
+                await asyncio.sleep(2)  # Wait 2 seconds between retries
+                
+        return self.pool is not None
 
     async def close(self) -> bool:
         """
@@ -470,7 +508,7 @@ class Database:
                     await cursor.execute(
                         """
                         UPDATE payments
-                        SET payment_at = payment_at + (%s || ' months')::INTERVAL
+                        SET payment_at = payment_at + (%s || ' months')::INTERVAL,
                             paid_on = %s
                         WHERE user_id = %s
                         """,
@@ -592,4 +630,55 @@ class Database:
                     return True
                 except Exception as e:
                     logger.logger.error("ON DROP TABLE ERROR: %s", e)
+                    return False
+
+    async def get_user_payment_info(self, user_id: int) -> Tuple[int, str, datetime, datetime] | None:
+        """
+        Get user's payment information including group details
+        :param user_id: a unique id of the user
+        :return: (group_id, group_name, next_payment_date, last_paid) tuple or None if not found
+        """
+        if not self.pool:
+            raise AttributeError("Database connection pool is empty")
+
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                try:
+                    await cursor.execute(
+                        """
+                        SELECT p.group_id, g.group_name, p.payment_at, p.paid_on
+                        FROM payments p
+                        JOIN groups g ON p.group_id = g.group_id
+                        WHERE p.user_id = %s
+                        """,
+                        (user_id,)
+                    )
+                    result = await cursor.fetchone()
+                    return result if result else None
+                except Exception as e:
+                    logger.logger.error("ON GET USER PAYMENT INFO: %s", e)
+                    return None
+
+    async def is_user_registered(self, user_id: int) -> bool:
+        """
+        Check if user exists in the system and has a group assigned
+        :param user_id: a unique id of the user
+        :return: True if user exists and has a group, False otherwise
+        """
+        if not self.pool:
+            raise AttributeError("Database connection pool is empty")
+
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                try:
+                    await cursor.execute(
+                        """
+                        SELECT 1 FROM payments WHERE user_id = %s
+                        """,
+                        (user_id,)
+                    )
+                    result = await cursor.fetchone()
+                    return result is not None
+                except Exception as e:
+                    logger.logger.error("ON CHECK USER REGISTRATION: %s", e)
                     return False

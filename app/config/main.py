@@ -11,6 +11,7 @@ Attributes:
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic.types import SecretStr
 from pydantic import Field
+from typing import Optional
 
 import os
 from typing import List
@@ -67,7 +68,7 @@ class DatabaseConfig(ConfigBase):
         username (SecretStr): database username.
         password (SecretStr): database password.
         host (str): database host.
-        port (int): database port.
+        port (int): database port (optional, defaults to 5432).
         database (str): database database.
     """
 
@@ -76,7 +77,7 @@ class DatabaseConfig(ConfigBase):
     username: SecretStr
     password: SecretStr
     host: str
-    port: int
+    port: Optional[int] = None  # Optional port, will use default if not specified
     database: str
 
 
