@@ -14,6 +14,7 @@ from .models import (
     User, Group, Payment, PaymentStatus,
     USERS_TABLE, GROUPS_TABLE, PAYMENTS_TABLE, USER_GROUP_TABLE, INDEXES
 )
+from ..utils.helpers import format_display_id, format_group_name
 
 
 class Database:
@@ -77,6 +78,40 @@ class Database:
             await self.pool.close()
             self.logger.info("🔌 Database connection closed")
     
+    async def _get_next_user_display_id(self) -> str:
+        """Get next available user display ID"""
+        if not self.pool:
+            return "001"
+        
+        try:
+            async with self.pool.acquire() as conn:
+                # Get highest existing display_id as integer
+                max_id = await conn.fetchval(
+                    "SELECT COALESCE(MAX(CAST(display_id AS INTEGER)), 0) FROM users WHERE display_id ~ '^[0-9]+$'"
+                )
+                next_id = (max_id or 0) + 1
+                return format_display_id(next_id)
+        except Exception as e:
+            self.logger.error(f"Failed to get next user display ID: {e}")
+            return "001"
+    
+    async def _get_next_group_display_id(self) -> str:
+        """Get next available group display ID"""
+        if not self.pool:
+            return "001"
+        
+        try:
+            async with self.pool.acquire() as conn:
+                # Get highest existing display_id as integer
+                max_id = await conn.fetchval(
+                    "SELECT COALESCE(MAX(CAST(display_id AS INTEGER)), 0) FROM groups WHERE display_id ~ '^[0-9]+$'"
+                )
+                next_id = (max_id or 0) + 1
+                return format_display_id(next_id)
+        except Exception as e:
+            self.logger.error(f"Failed to get next group display ID: {e}")
+            return "001"
+    
     async def initialize_tables(self) -> bool:
         """Initialize database tables"""
         if not self.pool:
@@ -91,7 +126,10 @@ class Database:
                 await conn.execute(PAYMENTS_TABLE)
                 await conn.execute(USER_GROUP_TABLE)
                 
-                # Create indexes
+                # Migrate existing data to add display_ids BEFORE creating indexes
+                await self._migrate_display_ids(conn)
+                
+                # Create indexes (now that display_id columns exist)
                 for index_sql in INDEXES:
                     await conn.execute(index_sql)
                 
@@ -102,6 +140,106 @@ class Database:
             self.logger.error(f"❌ Failed to initialize tables: {e}")
             return False
     
+    async def _migrate_display_ids(self, conn):
+        """Migrate existing data to add display_ids where missing"""
+        try:
+            # Check if users table has display_id column
+            users_has_display_id = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'display_id'
+                )
+            """)
+            
+            if not users_has_display_id:
+                self.logger.info("🔄 Adding display_id column to users table...")
+                await conn.execute("ALTER TABLE users ADD COLUMN display_id VARCHAR(3)")
+                
+                # Populate display_ids for existing users
+                existing_users = await conn.fetch("SELECT user_id FROM users ORDER BY user_id")
+                for i, user in enumerate(existing_users, 1):
+                    display_id = format_display_id(i)
+                    await conn.execute(
+                        "UPDATE users SET display_id = $1 WHERE user_id = $2",
+                        display_id, user['user_id']
+                    )
+                
+                # Add constraints
+                await conn.execute("ALTER TABLE users ADD CONSTRAINT users_display_id_unique UNIQUE (display_id)")
+                await conn.execute("ALTER TABLE users ALTER COLUMN display_id SET NOT NULL")
+                self.logger.info("✅ Users table migration completed")
+            else:
+                # Check if users need display_id migration
+                users_without_display_id = await conn.fetch(
+                    "SELECT user_id FROM users WHERE display_id IS NULL OR display_id = ''"
+                )
+                
+                for i, user in enumerate(users_without_display_id, 1):
+                    next_id = await self._get_next_user_display_id()
+                    await conn.execute(
+                        "UPDATE users SET display_id = $1 WHERE user_id = $2",
+                        next_id, user['user_id']
+                    )
+            
+            # Check if groups table has display_id column
+            groups_has_display_id = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'groups' AND column_name = 'display_id'
+                )
+            """)
+            
+            if not groups_has_display_id:
+                self.logger.info("🔄 Adding display_id column to groups table...")
+                await conn.execute("ALTER TABLE groups ADD COLUMN display_id VARCHAR(3)")
+                
+                # Populate display_ids for existing groups and update names
+                existing_groups = await conn.fetch("SELECT group_id, group_name FROM groups ORDER BY group_id")
+                for i, group in enumerate(existing_groups, 1):
+                    display_id = format_display_id(i)
+                    new_group_name = format_group_name(display_id)
+                    await conn.execute(
+                        "UPDATE groups SET display_id = $1, group_name = $2 WHERE group_id = $3",
+                        display_id, new_group_name, group['group_id']
+                    )
+                
+                # Add constraints
+                await conn.execute("ALTER TABLE groups ADD CONSTRAINT groups_display_id_unique UNIQUE (display_id)")
+                await conn.execute("ALTER TABLE groups ALTER COLUMN display_id SET NOT NULL")
+                self.logger.info("✅ Groups table migration completed")
+            else:
+                # Check if groups need display_id migration and group name formatting
+                groups_without_display_id = await conn.fetch(
+                    "SELECT group_id, group_name FROM groups WHERE display_id IS NULL OR display_id = ''"
+                )
+                
+                for group in groups_without_display_id:
+                    next_id = await self._get_next_group_display_id()
+                    new_group_name = format_group_name(next_id)
+                    
+                    await conn.execute(
+                        "UPDATE groups SET display_id = $1, group_name = $2 WHERE group_id = $3",
+                        next_id, new_group_name, group['group_id']
+                    )
+                
+                # Also update existing groups to use spotify format if they don't already
+                groups_needing_name_update = await conn.fetch(
+                    "SELECT group_id, display_id FROM groups WHERE display_id IS NOT NULL AND NOT group_name LIKE 'spotify %'"
+                )
+                
+                for group in groups_needing_name_update:
+                    new_group_name = format_group_name(group['display_id'])
+                    await conn.execute(
+                        "UPDATE groups SET group_name = $1 WHERE group_id = $2",
+                        new_group_name, group['group_id']
+                    )
+                
+                self.logger.info("✅ Groups migration completed")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Migration failed: {e}")
+            raise
+    
     # User operations
     async def add_user(self, user_id: int, username: str, first_name: Optional[str] = None) -> bool:
         """Add or update user"""
@@ -110,15 +248,30 @@ class Database:
         
         try:
             async with self.pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO users (user_id, username, first_name) 
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT (user_id) 
-                    DO UPDATE SET username = $2, first_name = $3
-                    """,
-                    user_id, username, first_name
-                )
+                # Check if user already exists
+                existing = await conn.fetchrow("SELECT display_id FROM users WHERE user_id = $1", user_id)
+                
+                if existing:
+                    # Update existing user
+                    await conn.execute(
+                        """
+                        UPDATE users SET username = $2, first_name = $3
+                        WHERE user_id = $1
+                        """,
+                        user_id, username, first_name
+                    )
+                else:
+                    # Create new user with new display_id
+                    display_id = await self._get_next_user_display_id()
+                    await conn.execute(
+                        """
+                        INSERT INTO users (user_id, username, display_id, first_name) 
+                        VALUES ($1, $2, $3, $4)
+                        """,
+                        user_id, username, display_id, first_name
+                    )
+                    self.logger.info(f"Added user {username} (ID: {user_id}, Display: {display_id})")
+                
                 return True
         except Exception as e:
             self.logger.error(f"Failed to add user {user_id}: {e}")
@@ -132,7 +285,7 @@ class Database:
         try:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT user_id, username, first_name, created_at FROM users WHERE user_id = $1",
+                    "SELECT user_id, username, display_id, first_name, created_at FROM users WHERE user_id = $1",
                     user_id
                 )
                 return User(*row) if row else None
@@ -148,15 +301,19 @@ class Database:
         
         try:
             async with self.pool.acquire() as conn:
+                # Get next display ID and format group name
+                display_id = await self._get_next_group_display_id()
+                formatted_group_name = format_group_name(display_id)
+                
                 group_id = await conn.fetchval(
                     """
-                    INSERT INTO groups (group_name, next_payment_date) 
-                    VALUES ($1, $2) 
+                    INSERT INTO groups (group_name, display_id, next_payment_date) 
+                    VALUES ($1, $2, $3) 
                     RETURNING group_id
                     """,
-                    group_name, next_payment_date
+                    formatted_group_name, display_id, next_payment_date
                 )
-                self.logger.info(f"Created group '{group_name}' with ID {group_id}")
+                self.logger.info(f"Created group '{formatted_group_name}' with ID {group_id}, Display: {display_id}")
                 return group_id
         except Exception as e:
             self.logger.error(f"Failed to create group '{group_name}': {e}")
@@ -170,7 +327,7 @@ class Database:
         try:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT group_id, group_name, next_payment_date, created_at FROM groups ORDER BY group_name"
+                    "SELECT group_id, group_name, display_id, next_payment_date, created_at FROM groups ORDER BY display_id"
                 )
                 return [Group(*row) for row in rows]
         except Exception as e:
@@ -185,7 +342,7 @@ class Database:
         try:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT group_id, group_name, next_payment_date, created_at FROM groups WHERE group_name = $1",
+                    "SELECT group_id, group_name, display_id, next_payment_date, created_at FROM groups WHERE group_name = $1",
                     group_name
                 )
                 return Group(*row) if row else None
@@ -234,19 +391,21 @@ class Database:
                     SELECT 
                         g.group_id,
                         g.group_name,
+                        g.display_id,
                         g.next_payment_date,
                         g.created_at,
                         COUNT(ug.user_id) as member_count
                     FROM groups g
                     LEFT JOIN user_groups ug ON g.group_id = ug.group_id
-                    GROUP BY g.group_id, g.group_name, g.next_payment_date, g.created_at
-                    ORDER BY g.group_name
+                    GROUP BY g.group_id, g.group_name, g.display_id, g.next_payment_date, g.created_at
+                    ORDER BY g.display_id
                 """)
                 
                 return [
                     {
                         'group_id': row['group_id'],
                         'group_name': row['group_name'],
+                        'display_id': row['display_id'],
                         'next_payment_date': row['next_payment_date'],
                         'created_at': row['created_at'],
                         'member_count': row['member_count']
@@ -287,7 +446,7 @@ class Database:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
-                    SELECT g.group_id, g.group_name, g.next_payment_date, g.created_at
+                    SELECT g.group_id, g.group_name, g.display_id, g.next_payment_date, g.created_at
                     FROM groups g
                     JOIN user_groups ug ON g.group_id = ug.group_id
                     WHERE ug.user_id = $1
@@ -336,8 +495,10 @@ class Database:
                     """
                     SELECT 
                         ug.user_id,
+                        u.display_id as user_display_id,
                         g.group_id,
                         g.group_name,
+                        g.display_id as group_display_id,
                         COALESCE(
                             (SELECT next_payment_date FROM payments 
                              WHERE user_id = ug.user_id AND group_id = g.group_id 
@@ -349,6 +510,7 @@ class Database:
                          ORDER BY payment_date DESC LIMIT 1) as last_payment_date
                     FROM user_groups ug
                     JOIN groups g ON ug.group_id = g.group_id
+                    JOIN users u ON ug.user_id = u.user_id
                     WHERE ug.user_id = $1
                     """,
                     user_id
@@ -366,8 +528,10 @@ class Database:
                 
                 return PaymentStatus(
                     user_id=row['user_id'],
+                    user_display_id=row['user_display_id'],
                     group_id=row['group_id'],
                     group_name=row['group_name'],
+                    group_display_id=row['group_display_id'],
                     next_payment_date=next_payment,
                     last_payment_date=row['last_payment_date'],
                     months_remaining=months_remaining,

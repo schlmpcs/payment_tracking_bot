@@ -133,13 +133,22 @@ async def id_command(message: types.Message):
     user = message.from_user
     username = user.username or user.first_name or "User"
     
+    # Get user's display ID from database
+    user_obj = None
+    if db and db.pool:
+        user_obj = await db.get_user(user.id)
+    
     id_text = (
         f"🆔 **Информация о вашем Telegram**\n\n"
         f"👤 Имя: {user.first_name or 'Н/Д'}\n"
         f"🏷️ Имя пользователя: @{user.username or 'Нет'}\n"
-        f"🔢 ID пользователя: `{user.id}`\n\n"
-        f"💡 **Для администраторов:** Чтобы сделать {username} администратором, добавьте этот ID в список TG_ADMIN_IDS в файле .env."
+        f"🔢 ID пользователя: `{user.id}`\n"
     )
+    
+    if user_obj and hasattr(user_obj, 'display_id'):
+        id_text += f"🎯 Ваш ID в боте: **{user_obj.display_id}**\n"
+    
+    id_text += f"\n💡 **Для администраторов:** Чтобы сделать {username} администратором, добавьте этот ID в список TG_ADMIN_IDS в файле .env."
     
     await message.answer(id_text, parse_mode="Markdown")
 

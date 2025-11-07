@@ -185,8 +185,12 @@ async def update_due_date_command(message: types.Message, state: FSMContext):
         days_until = calculate_days_until(group.next_payment_date)
         status_emoji = get_payment_status_emoji(days_until)
         
+    for group in groups:
+        days_until = calculate_days_until(group.next_payment_date)
+        status_emoji = get_payment_status_emoji(days_until)
+        
         groups_text += (
-            f"{status_emoji} **{group.group_name}** (ID: {group.group_id})\n"
+            f"{status_emoji} **{group.group_name}** (ID: {group.display_id})\n"
             f"📅 Текущая дата платежа: {format_date(group.next_payment_date)}\n"
             f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
         )
@@ -218,7 +222,7 @@ async def view_groups(callback: types.CallbackQuery):
         emoji = get_payment_status_emoji(days_until)
         
         response += (
-            f"{emoji} **{group.group_name}** (ID: {group.group_id})\n"
+            f"{emoji} **{group.group_name}** (ID: {group.display_id})\n"
             f"📅 Следующий платёж: {format_date(group.next_payment_date)}\n"
             f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
         )
@@ -290,26 +294,23 @@ async def create_group_finish(message: types.Message, state: FSMContext):
         await message.answer("❌ Название группы не может быть пустым. Пожалуйста, попробуйте снова.")
         return
     
-    # Check if group already exists
-    existing_group = await db.get_group_by_name(group_name)
-    if existing_group:
-        await message.answer(f"❌ Группа '{group_name}' уже существует.")
-        await state.clear()
-        return
-    
-    # Create group with next payment date set to next month
+    # Create group with next display ID and formatted name
     next_payment_date = datetime.now() + timedelta(days=30)
-    group_id = await db.create_group(group_name, next_payment_date)
+    group_id = await db.create_group(group_name, next_payment_date)  # Function handles formatting internally
     
     if group_id:
+        # Get the created group to show display_id
+        created_groups = await db.get_all_groups() if db else []
+        created_group = next((g for g in created_groups if g.group_id == group_id), None)
+        
         await message.answer(
             f"✅ **Группа успешно создана!**\n\n"
-            f"👥 Название группы: {group_name}\n"
-            f"🆔 ID группы: {group_id}\n"
+            f"👥 Название группы: {created_group.group_name if created_group else 'N/A'}\n"
+            f"🆔 ID группы: {created_group.display_id if created_group else 'N/A'}\n"
             f"📅 Дата следующего платежа: {format_date(next_payment_date)}",
             parse_mode="Markdown"
         )
-        logger.info(f"Admin {user_id} created group '{group_name}' (ID: {group_id})")
+        logger.info(f"Admin {user_id} created group (ID: {group_id})")
     else:
         await message.answer("❌ Не удалось создать группу. Пожалуйста, попробуйте снова.")
     

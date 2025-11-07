@@ -17,6 +17,31 @@ def format_datetime(date: datetime) -> str:
     return date.strftime("%Y-%m-%d %H:%M")
 
 
+def format_display_id(number: int) -> str:
+    """Format number as 3-digit display ID (001, 002, etc.)"""
+    return f"{number:03d}"
+
+
+def parse_display_id(display_id: str) -> int:
+    """Parse 3-digit display ID back to integer"""
+    try:
+        return int(display_id)
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid display ID format: {display_id}")
+
+
+def format_group_name(display_id: str) -> str:
+    """Format group name as 'spotify 001' pattern"""
+    return f"spotify {display_id}"
+
+
+def extract_group_display_id(group_name: str) -> str:
+    """Extract display ID from group name like 'spotify 001' -> '001'"""
+    if group_name.startswith("spotify "):
+        return group_name[8:]  # Remove "spotify " prefix
+    raise ValueError(f"Invalid group name format: {group_name}")
+
+
 def calculate_days_until(target_date) -> int:
     """Calculate days until target date"""
     from datetime import datetime, date
