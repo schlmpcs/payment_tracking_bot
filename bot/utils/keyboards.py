@@ -11,12 +11,12 @@ def get_months_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     for i in range(1, 7):
-        text = f"{i} month{'s' if i != 1 else ''}"
+        text = f"{i} месяц{'ев' if i > 1 else ''}"
         builder.button(text=text, callback_data=f"months_{i}")
     
     builder.adjust(2)  # 2 buttons per row
     builder.row(
-        InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_payment")
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment")
     )
     
     return builder.as_markup()
@@ -27,15 +27,19 @@ def get_admin_main_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     builder.row(
-        InlineKeyboardButton(text="👥 View Groups", callback_data="admin_view_groups"),
-        InlineKeyboardButton(text="📊 Overdue Users", callback_data="admin_overdue_users")
+        InlineKeyboardButton(text="👥 Просмотр групп", callback_data="admin_view_groups"),
+        InlineKeyboardButton(text="📊 Просроченные пользователи", callback_data="admin_overdue_users")
     )
     builder.row(
-        InlineKeyboardButton(text="➕ Create Group", callback_data="admin_create_group"),
-        InlineKeyboardButton(text="👤 Add User", callback_data="admin_add_user")
+        InlineKeyboardButton(text="➕ Создать группу", callback_data="admin_create_group"),
+        InlineKeyboardButton(text="👤 Добавить пользователя", callback_data="admin_add_user")
     )
     builder.row(
-        InlineKeyboardButton(text="📈 Statistics", callback_data="admin_stats")
+        InlineKeyboardButton(text="📅 Обновить дату платежа", callback_data="admin_update_due_date")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats"),
+        InlineKeyboardButton(text="🔔 Тест уведомлений", callback_data="admin_test_notifications")
     )
     
     return builder.as_markup()
@@ -46,8 +50,8 @@ def get_confirmation_keyboard(action: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     builder.row(
-        InlineKeyboardButton(text="✅ Yes", callback_data=f"confirm_{action}"),
-        InlineKeyboardButton(text="❌ No", callback_data=f"cancel_{action}")
+        InlineKeyboardButton(text="✅ Да", callback_data=f"confirm_{action}"),
+        InlineKeyboardButton(text="❌ Нет", callback_data=f"cancel_{action}")
     )
     
     return builder.as_markup()

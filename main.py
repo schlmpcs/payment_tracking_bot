@@ -15,6 +15,7 @@ from bot.config.settings import Settings
 from bot.database.operations import Database
 from bot.handlers.user import user_router, init_user_handlers
 from bot.handlers.admin import admin_router, init_admin_handlers
+from bot.utils.notifications import NotificationScheduler
 
 
 async def main():
@@ -64,12 +65,24 @@ async def main():
     init_user_handlers(db, settings)
     init_admin_handlers(db, settings)
     
+    # Initialize notification scheduler
+    scheduler = None
+    if db and db.pool:
+        scheduler = NotificationScheduler(bot, db, settings)
+        await scheduler.start()
+        logger.info("🔔 Payment notification system started")
+    else:
+        logger.warning("⚠️ Notification system disabled - database not available")
+    
     try:
         logger.info("🚀 Starting bot polling...")
         await dp.start_polling(bot)
     except KeyboardInterrupt:
         logger.info("👋 Bot stopped by user")
     finally:
+        # Cleanup
+        if scheduler:
+            await scheduler.stop()
         await bot.session.close()
         if 'db' in locals():
             await db.close()

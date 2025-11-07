@@ -17,9 +17,19 @@ def format_datetime(date: datetime) -> str:
     return date.strftime("%Y-%m-%d %H:%M")
 
 
-def calculate_days_until(target_date: datetime) -> int:
+def calculate_days_until(target_date) -> int:
     """Calculate days until target date"""
-    return (target_date.date() - datetime.now().date()).days
+    from datetime import datetime, date
+    
+    # Handle both datetime and date objects
+    if isinstance(target_date, datetime):
+        target_date = target_date.date()
+    elif isinstance(target_date, date):
+        pass  # Already a date object
+    else:
+        raise TypeError(f"Expected datetime or date object, got {type(target_date)}")
+    
+    return (target_date - datetime.now().date()).days
 
 
 def get_payment_status_emoji(days_until: int) -> str:
@@ -35,11 +45,11 @@ def get_payment_status_emoji(days_until: int) -> str:
 def get_payment_status_text(days_until: int) -> str:
     """Get status text based on days until payment"""
     if days_until > 0:
-        return f"Paid ({days_until} days remaining)"
+        return f"Оплачено ({days_until} дней осталось)"
     elif days_until == 0:
-        return "Payment due TODAY"
+        return "Платёж сегодня"
     else:
-        return f"OVERDUE ({abs(days_until)} days)"
+        return f"ПРОСРОЧЕНО ({abs(days_until)} дней)"
 
 
 def is_admin(user_id: int, admin_ids: List[int]) -> bool:

@@ -43,19 +43,158 @@ async def admin_command(message: types.Message):
     
     user_id = message.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
-        await message.answer("❌ Access denied. Admin only command.")
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
         return
     
     if not db or not db.pool:
-        await message.answer("❌ Database is currently unavailable.")
+        await message.answer("❌ База данных в настоящее время недоступна.")
         return
     
     await message.answer(
-        "🔧 **Admin Panel**\n\n"
-        "Choose an action:",
+        "🔧 **Панель администратора**\n\n"
+        "Выберите действие:",
         reply_markup=get_admin_main_keyboard(),
         parse_mode="Markdown"
     )
+
+
+@admin_router.message(Command("check_notifications"))
+async def check_notifications_command(message: types.Message):
+    """Check what notifications would be sent (without actually sending them)"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+    
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+    
+    try:
+        # Check users needing reminders
+        reminder_users = await db.get_users_needing_reminders(settings.bot_payment_reminder_days)
+        
+        # Check users overdue for admin warnings
+        overdue_users = await db.get_users_overdue_for_admin_warning(3)
+        
+        response = "🔍 *Проверка статуса уведомлений*\n\n"
+        
+        if reminder_users:
+            response += f"📬 *Пользователи, нуждающиеся в напоминаниях* ({len(reminder_users)}):\n"
+            for status in reminder_users:
+                response += f"• Пользователь {status.user_id} в '{status.group_name}'\n"
+                response += f"  📅 Срок: {format_date(status.next_payment_date)}\n"
+            response += "\n"
+        else:
+            response += "📭 Сегодня никому не нужны напоминания об оплате\n\n"
+        
+        if overdue_users:
+            response += f"🚨 *Пользователи с просроченными платежами для предупреждения администратора* ({len(overdue_users)}):\n"
+            for status in overdue_users:
+                user_name = getattr(status, 'first_name', f'Пользователь {status.user_id}')
+                response += f"• {user_name} в '{status.group_name}'\n"
+                response += f"  📅 Срок был: {format_date(status.next_payment_date)}\n"
+            response += "\n"
+        else:
+            response += "✅ Нет пользователей с просроченными предупреждениями\n\n"
+        
+        response += "💡 Используйте /test\\_notifications для фактической отправки этих уведомлений"
+        
+        await message.answer(response, parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Check notifications failed: {e}")
+        await message.answer(
+            f"❌ *Проверка не удалась:*\n\n`{str(e)}`",
+            parse_mode="Markdown"
+        )
+
+
+@admin_router.message(Command("test_notifications"))
+async def test_notifications_command(message: types.Message):
+    """Handle /test_notifications command"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+    
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+    
+    await message.answer("🧪 Запуск тестовых уведомлений...")
+    
+    try:
+        # Import here to avoid circular imports
+        from bot.utils.notifications import NotificationScheduler
+        
+        # Create a temporary scheduler for testing
+        test_scheduler = NotificationScheduler(message.bot, db, settings)
+        
+        # Run the notification checks
+        await test_scheduler.send_test_notifications()
+        
+        await message.answer(
+            "✅ **Тестовые уведомления завершены!**\n\n"
+            "Проверьте логи бота, чтобы увидеть, были ли отправлены уведомления.\n\n"
+            "💡 **Напоминание:** Уведомления отправляются автоматически ежедневно в 9:00 утра.",
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Test notifications failed: {e}")
+        await message.answer(
+            f"❌ **Тестовые уведомления не удались:**\n\n"
+            f"`{str(e)}`\n\n"
+            f"Проверьте логи бота для получения дополнительной информации.",
+            parse_mode="Markdown"
+        )
+
+
+@admin_router.message(Command("update_due_date"))
+async def update_due_date_command(message: types.Message, state: FSMContext):
+    """Handle /update_due_date command"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+    
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+    
+    # Show available groups
+    groups = await db.get_all_groups()
+    if not groups:
+        await message.answer("❌ Нет доступных групп.")
+        return
+    
+    groups_text = "📅 **Обновить дату платежа группы**\n\n"
+    groups_text += "Доступные группы:\n\n"
+    
+    for group in groups:
+        days_until = calculate_days_until(group.next_payment_date)
+        status_emoji = get_payment_status_emoji(days_until)
+        
+        groups_text += (
+            f"{status_emoji} **{group.group_name}** (ID: {group.group_id})\n"
+            f"📅 Текущая дата платежа: {format_date(group.next_payment_date)}\n"
+            f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
+        )
+    
+    groups_text += "Пожалуйста, введите название группы, которую хотите обновить:"
+    
+    await message.answer(groups_text, parse_mode="Markdown")
+    await state.set_state(AdminStates.updating_due_date_group)
 
 
 @admin_router.callback_query(F.data == "admin_view_groups")
@@ -63,16 +202,16 @@ async def view_groups(callback: types.CallbackQuery):
     """View all payment groups"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("Доступ запрещён", show_alert=True)
         return
     
     groups = await db.get_all_groups()
     
     if not groups:
-        await callback.message.edit_text("📭 No payment groups found.")
+        await callback.message.edit_text("📭 Группы оплаты не найдены.")
         return
     
-    response = "👥 **All Payment Groups:**\n\n"
+    response = "👥 **Все группы оплаты:**\n\n"
     
     for group in groups:
         days_until = calculate_days_until(group.next_payment_date)
@@ -80,8 +219,8 @@ async def view_groups(callback: types.CallbackQuery):
         
         response += (
             f"{emoji} **{group.group_name}** (ID: {group.group_id})\n"
-            f"📅 Next payment: {format_date(group.next_payment_date)}\n"
-            f"📊 Status: {get_payment_status_text(days_until)}\n\n"
+            f"📅 Следующий платёж: {format_date(group.next_payment_date)}\n"
+            f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
         )
     
     await callback.message.edit_text(response, parse_mode="Markdown")
@@ -93,25 +232,25 @@ async def view_overdue_users(callback: types.CallbackQuery):
     """View users with overdue payments"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("Доступ запрещён", show_alert=True)
         return
     
     overdue_users = await db.get_overdue_users()
     
     if not overdue_users:
-        await callback.message.edit_text("✅ No overdue payments found!")
+        await callback.message.edit_text("✅ Просроченных платежей не найдено!")
         return
     
-    response = "❌ **Overdue Payments:**\n\n"
+    response = "❌ **Просроченные платежи:**\n\n"
     
     for status in overdue_users:
         days_overdue = abs(calculate_days_until(status.next_payment_date))
         
         response += (
-            f"👤 User ID: {status.user_id}\n"
-            f"👥 Group: {status.group_name}\n"
-            f"📅 Due date: {format_date(status.next_payment_date)}\n"
-            f"⏰ Overdue: {days_overdue} days\n\n"
+            f"👤 ID пользователя: {status.user_id}\n"
+            f"👥 Группа: {status.group_name}\n"
+            f"📅 Дата платежа: {format_date(status.next_payment_date)}\n"
+            f"⏰ Просрочено: {days_overdue} дней\n\n"
         )
     
     await callback.message.edit_text(response, parse_mode="Markdown")
@@ -123,12 +262,12 @@ async def create_group_start(callback: types.CallbackQuery, state: FSMContext):
     """Start group creation process"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("Доступ запрещён", show_alert=True)
         return
     
     await callback.message.edit_text(
-        "➕ **Create New Group**\n\n"
-        "Please enter the group name:"
+        "➕ **Создать новую группу**\n\n"
+        "Пожалуйста, введите название группы:"
     )
     
     await state.set_state(AdminStates.creating_group)
@@ -148,13 +287,13 @@ async def create_group_finish(message: types.Message, state: FSMContext):
     group_name = message.text.strip()
     
     if not group_name:
-        await message.answer("❌ Group name cannot be empty. Please try again.")
+        await message.answer("❌ Название группы не может быть пустым. Пожалуйста, попробуйте снова.")
         return
     
     # Check if group already exists
     existing_group = await db.get_group_by_name(group_name)
     if existing_group:
-        await message.answer(f"❌ Group '{group_name}' already exists.")
+        await message.answer(f"❌ Группа '{group_name}' уже существует.")
         await state.clear()
         return
     
@@ -164,15 +303,15 @@ async def create_group_finish(message: types.Message, state: FSMContext):
     
     if group_id:
         await message.answer(
-            f"✅ **Group Created Successfully!**\n\n"
-            f"👥 Group name: {group_name}\n"
-            f"🆔 Group ID: {group_id}\n"
-            f"📅 Next payment date: {format_date(next_payment_date)}",
+            f"✅ **Группа успешно создана!**\n\n"
+            f"👥 Название группы: {group_name}\n"
+            f"🆔 ID группы: {group_id}\n"
+            f"📅 Дата следующего платежа: {format_date(next_payment_date)}",
             parse_mode="Markdown"
         )
         logger.info(f"Admin {user_id} created group '{group_name}' (ID: {group_id})")
     else:
-        await message.answer("❌ Failed to create group. Please try again.")
+        await message.answer("❌ Не удалось создать группу. Пожалуйста, попробуйте снова.")
     
     await state.clear()
 
@@ -182,12 +321,12 @@ async def add_user_start(callback: types.CallbackQuery, state: FSMContext):
     """Start user addition process"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("Доступ запрещён", show_alert=True)
         return
     
     await callback.message.edit_text(
-        "👤 **Add User to Group**\n\n"
-        "Please enter the user's Telegram ID (numeric):"
+        "👤 **Добавить пользователя в группу**\n\n"
+        "Пожалуйста, введите Telegram ID пользователя (числовой):"
     )
     
     await state.set_state(AdminStates.adding_user_username)
@@ -273,6 +412,142 @@ async def add_user_finish(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+@admin_router.callback_query(F.data == "admin_update_due_date")
+async def update_due_date_start(callback: types.CallbackQuery, state: FSMContext):
+    """Start due date update process"""
+    user_id = callback.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("Access denied", show_alert=True)
+        return
+    
+    # Show available groups
+    groups = await db.get_all_groups()
+    if not groups:
+        await callback.message.edit_text("❌ No groups available.")
+        return
+    
+    groups_text = "📅 **Update Group Due Date**\n\n"
+    groups_text += "Available groups:\n\n"
+    
+    for group in groups:
+        days_until = calculate_days_until(group.next_payment_date)
+        status_emoji = get_payment_status_emoji(days_until)
+        
+        groups_text += (
+            f"{status_emoji} **{group.group_name}** (ID: {group.group_id})\n"
+            f"📅 Current due date: {format_date(group.next_payment_date)}\n"
+            f"📊 Status: {get_payment_status_text(days_until)}\n\n"
+        )
+    
+    groups_text += "Please enter the group name you want to update:"
+    
+    await callback.message.edit_text(groups_text, parse_mode="Markdown")
+    await state.set_state(AdminStates.updating_due_date_group)
+    await callback.answer()
+
+
+@admin_router.message(StateFilter(AdminStates.updating_due_date_group))
+async def update_due_date_get_date(message: types.Message, state: FSMContext):
+    """Get new due date for the group"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        return
+    
+    group_name = message.text.strip()
+    
+    # Get group
+    group = await db.get_group_by_name(group_name)
+    if not group:
+        await message.answer(f"❌ Group '{group_name}' not found. Please try again.")
+        return
+    
+    await state.update_data(group=group)
+    
+    await message.answer(
+        f"📅 **Update Due Date for {group.group_name}**\n\n"
+        f"Current due date: {format_date(group.next_payment_date)}\n\n"
+        f"Please enter the new due date in format: **YYYY-MM-DD**\n\n"
+        f"Examples:\n"
+        f"• `2025-11-15` (November 15, 2025)\n"
+        f"• `2025-12-01` (December 1, 2025)\n\n"
+        f"Or type `cancel` to cancel.",
+        parse_mode="Markdown"
+    )
+    
+    await state.set_state(AdminStates.updating_due_date_date)
+
+
+@admin_router.message(StateFilter(AdminStates.updating_due_date_date))
+async def update_due_date_finish(message: types.Message, state: FSMContext):
+    """Finish due date update"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        return
+    
+    if message.text.strip().lower() == 'cancel':
+        await message.answer("❌ Due date update cancelled.")
+        await state.clear()
+        return
+    
+    data = await state.get_data()
+    group = data.get('group')
+    
+    if not group:
+        await message.answer("❌ Error: Group data not found. Please start over.")
+        await state.clear()
+        return
+    
+    # Parse the date
+    try:
+        from datetime import datetime
+        date_str = message.text.strip()
+        new_due_date = datetime.strptime(date_str, "%Y-%m-%d")
+        
+        # Check if date is not in the past
+        if new_due_date.date() < datetime.now().date():
+            await message.answer("❌ Due date cannot be in the past. Please enter a future date.")
+            return
+            
+    except ValueError:
+        await message.answer(
+            "❌ Invalid date format. Please use **YYYY-MM-DD** format.\n\n"
+            "Example: `2025-11-15`",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Update the due date
+    success = await db.update_group_due_date(group.group_id, new_due_date)
+    
+    if success:
+        days_until = calculate_days_until(new_due_date)
+        status_emoji = get_payment_status_emoji(days_until)
+        
+        await message.answer(
+            f"✅ **Due Date Updated Successfully!**\n\n"
+            f"👥 Group: {group.group_name}\n"
+            f"📅 Old due date: {format_date(group.next_payment_date)}\n"
+            f"📅 New due date: {format_date(new_due_date.date())}\n"
+            f"{status_emoji} Status: {get_payment_status_text(days_until)}\n\n"
+            f"💡 All users in this group will now be reminded based on the new date.",
+            parse_mode="Markdown"
+        )
+        
+        logger.info(f"Admin {user_id} updated due date for group '{group.group_name}' from {group.next_payment_date} to {new_due_date.date()}")
+    else:
+        await message.answer(
+            "❌ Failed to update due date. Please try again or check the logs for errors."
+        )
+    
+    await state.clear()
+
+
 @admin_router.callback_query(F.data == "admin_stats")
 async def view_statistics(callback: types.CallbackQuery):
     """View payment statistics"""
@@ -306,6 +581,59 @@ async def view_statistics(callback: types.CallbackQuery):
     
     await callback.message.edit_text(response, parse_mode="Markdown")
     await callback.answer()
+
+
+@admin_router.callback_query(F.data == "admin_test_notifications")
+async def handle_test_notifications(callback: types.CallbackQuery):
+    """Handle test notifications request"""
+    user_id = callback.from_user.id
+    
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("❌ Access denied.", show_alert=True)
+        return
+    
+    await callback.answer("🔔 Testing notifications...")
+    
+    # Import here to avoid circular imports
+    from bot.utils.notifications import NotificationScheduler
+    
+    if not db or not db.pool:
+        await callback.message.edit_text(
+            "❌ **Test Notifications Failed**\n\n"
+            "Database is not available.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    try:
+        # Create a temporary scheduler for testing
+        test_scheduler = NotificationScheduler(callback.bot, db, settings)
+        
+        await callback.message.edit_text(
+            "🧪 **Running Test Notifications**\n\n"
+            "Checking for users needing reminders and overdue warnings...\n"
+            "This may take a few seconds.",
+            parse_mode="Markdown"
+        )
+        
+        # Run the notification checks
+        await test_scheduler.send_test_notifications()
+        
+        await callback.message.edit_text(
+            "✅ **Test Notifications Complete**\n\n"
+            "Check the bot logs for details about sent notifications.\n\n"
+            "💡 **Note:** Notifications are sent automatically daily at 9:00 AM.",
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Test notifications failed: {e}")
+        await callback.message.edit_text(
+            f"❌ **Test Notifications Failed**\n\n"
+            f"Error: {str(e)}\n\n"
+            f"Check the bot logs for more details.",
+            parse_mode="Markdown"
+        )
 
 
 # Handle any unrecognized admin callback

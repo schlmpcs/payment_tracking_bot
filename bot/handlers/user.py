@@ -11,7 +11,7 @@ from aiogram.enums import ChatType
 
 from bot.database.operations import Database
 from bot.config.settings import Settings
-from bot.utils.states import PaymentStates
+from bot.utils.states import PaymentStates, JoinStates
 from bot.utils.keyboards import get_months_keyboard
 from bot.utils.helpers import (
     format_date, calculate_days_until,
@@ -44,6 +44,9 @@ async def start_command(message: types.Message):
     user = message.from_user
     username = user.username or user.first_name or "User"
     
+    # Debug: Log user ID for admin setup
+    logger.info(f"🆔 User {username} (ID: {user.id}) started the bot")
+    
     # Add user to database
     if db and db.pool:
         await db.add_user(user.id, username, user.first_name)
@@ -58,35 +61,36 @@ async def start_command(message: types.Message):
                 emoji = get_payment_status_emoji(days_until)
                 
                 welcome_text = (
-                    f"👋 Welcome back, {username}!\n\n"
-                    f"👥 Group: **{status.group_name}**\n"
-                    f"{emoji} Next payment: {format_date(status.next_payment_date)}\n"
-                    f"📊 Status: {get_payment_status_text(days_until)}\n\n"
-                    f"💡 Use /pay to upload a payment receipt\n"
-                    f"📋 Use /status for detailed payment information\n"
-                    f"❓ Use /help for all available commands"
+                    f"👋 С возвращением, {username}!\n\n"
+                    f"👥 Группа: **{status.group_name}**\n"
+                    f"{emoji} Следующий платёж: {format_date(status.next_payment_date)}\n"
+                    f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
+                    f"💡 Используйте /pay для загрузки чека об оплате\n"
+                    f"📋 Используйте /status для подробной информации о платежах\n"
+                    f"❓ Используйте /help для просмотра всех команд"
                 )
             else:
                 welcome_text = (
-                    f"👋 Welcome, {username}!\n\n"
-                    f"⚠️ There's an issue with your account.\n"
-                    f"Please contact an admin for assistance."
+                    f"👋 Добро пожаловать, {username}!\n\n"
+                    f"⚠️ Возникла проблема с вашим аккаунтом.\n"
+                    f"Пожалуйста, обратитесь к администратору за помощью."
                 )
         else:
             welcome_text = (
-                f"👋 Welcome, {username}!\n\n"
-                f"🔒 You're not registered in any payment group yet.\n"
-                f"Please contact an admin to be added to a group.\n\n"
-                f"Once registered, you'll be able to:\n"
-                f"• 💳 Upload payment receipts\n"
-                f"• 📊 Check payment status\n"
-                f"• 📅 Track payment history"
+                f"👋 Добро пожаловать, {username}!\n\n"
+                f"🔒 Вы ещё не зарегистрированы ни в одной группе для оплаты.\n\n"
+                f"🚪 **Присоединиться к группе:** Используйте /join для просмотра доступных групп\n"
+                f"❓ **Нужна помощь:** Используйте /help для просмотра всех команд\n\n"
+                f"После регистрации вы сможете:\n"
+                f"• 💳 Загружать чеки об оплате\n"
+                f"• 📊 Проверять статус платежей\n"
+                f"• 📅 Отслеживать историю платежей"
             )
     else:
         welcome_text = (
-            f"👋 Welcome, {username}!\n\n"
-            f"⚠️ Database is currently unavailable.\n"
-            f"Please try again later."
+            f"👋 Добро пожаловать, {username}!\n\n"
+            f"⚠️ База данных в настоящее время недоступна.\n"
+            f"Пожалуйста, попробуйте позже."
         )
     
     await message.answer(welcome_text, parse_mode="Markdown")
@@ -99,24 +103,173 @@ async def help_command(message: types.Message):
         return
     
     help_text = (
-        "🤖 **Spotify Payment Bot Help**\n\n"
-        "**Available Commands:**\n"
-        "🏠 /start - Welcome message and status overview\n"
-        "💳 /pay - Upload payment receipt\n"
-        "📊 /status - Check your payment status\n"
-        "❓ /help - Show this help message\n\n"
-        "**How to pay:**\n"
-        "1. Use the /pay command\n"
-        "2. Select how many months to pay (1-6)\n"
-        "3. Upload your bank transfer receipt\n"
-        "4. Payment will be processed automatically\n\n"
-        "**Supported receipt formats:**\n"
-        "• 📷 Photos (JPG, PNG)\n"
-        "• 📄 PDF documents\n\n"
-        "**Need help?** Contact an admin if you have any issues."
+        "🤖 **Справка по боту Spotify Payment**\n\n"
+        "**Доступные команды:**\n"
+        "🏠 /start - Приветственное сообщение и обзор статуса\n"
+        "🚪 /join - Присоединиться к группе оплаты\n"
+        "💳 /pay - Загрузить чек об оплате\n"
+        "📊 /status - Проверить статус ваших платежей\n"
+        "❓ /help - Показать эту справку\n\n"
+        "**Как оплатить:**\n"
+        "1. Используйте команду /pay\n"
+        "2. Выберите количество месяцев для оплаты (1-6)\n"
+        "3. Загрузите чек банковского перевода\n"
+        "4. Платёж будет обработан автоматически\n\n"
+        "**Поддерживаемые форматы чеков:**\n"
+        "• 📷 Фотографии (JPG, PNG)\n"
+        "• 📄 PDF документы\n\n"
+        "**Нужна помощь?** Обратитесь к администратору, если у вас есть проблемы."
     )
     
     await message.answer(help_text, parse_mode="Markdown")
+
+
+@user_router.message(Command("id"))
+async def id_command(message: types.Message):
+    """Handle /id command - show user ID for admin setup"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user = message.from_user
+    username = user.username or user.first_name or "User"
+    
+    id_text = (
+        f"🆔 **Информация о вашем Telegram**\n\n"
+        f"👤 Имя: {user.first_name or 'Н/Д'}\n"
+        f"🏷️ Имя пользователя: @{user.username or 'Нет'}\n"
+        f"🔢 ID пользователя: `{user.id}`\n\n"
+        f"💡 **Для администраторов:** Чтобы сделать {username} администратором, добавьте этот ID в список TG_ADMIN_IDS в файле .env."
+    )
+    
+    await message.answer(id_text, parse_mode="Markdown")
+
+
+@user_router.message(Command("join"))
+async def join_command(message: types.Message, state: FSMContext):
+    """Handle /join command - show available groups and allow user to join"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user = message.from_user
+    username = user.username or user.first_name or "User"
+    
+    if not db or not db.pool:
+        await message.answer(
+            "❌ База данных в настоящее время недоступна.\n"
+            "Пожалуйста, попробуйте позже."
+        )
+        return
+    
+    # Check if user is already in a group
+    is_registered = await db.is_user_registered(user.id)
+    if is_registered:
+        current_group = await db.get_user_group(user.id)
+        if current_group:
+            await message.answer(
+                f"ℹ️ Вы уже являетесь участником группы **{current_group.group_name}**.\n\n"
+                f"Если хотите сменить группу, пожалуйста, обратитесь к администратору.",
+                parse_mode="Markdown"
+            )
+            return
+    
+    # Get all available groups with member counts
+    groups = await db.get_groups_with_member_count()
+    
+    if not groups:
+        await message.answer(
+            "❌ На данный момент нет доступных групп оплаты.\n"
+            "Пожалуйста, обратитесь к администратору для создания группы."
+        )
+        return
+    
+    # Build groups list message
+    groups_text = "🚪 **Доступные группы оплаты**\n\n"
+    groups_text += "Выберите группу для присоединения, отправив её номер:\n\n"
+    
+    for i, group in enumerate(groups, 1):
+        member_text = f"{group['member_count']} участник{'ов' if group['member_count'] != 1 else ''}"
+        groups_text += f"**{i}.** {group['group_name']} ({member_text})\n"
+    
+    groups_text += f"\n💡 **Пример:** Отправьте `{1}` чтобы присоединиться к первой группе"
+    groups_text += f"\n❌ Отправьте `отмена` для отмены"
+    
+    await message.answer(groups_text, parse_mode="Markdown")
+    
+    # Store groups in state data and set state
+    await state.set_data({"available_groups": groups})
+    await state.set_state(JoinStates.selecting_group)
+
+
+@user_router.message(StateFilter(JoinStates.selecting_group))
+async def handle_group_selection(message: types.Message, state: FSMContext):
+    """Handle group selection during join process"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user = message.from_user
+    username = user.username or user.first_name or "User"
+    text = message.text.strip()
+    
+    # Handle cancel
+    if text.lower() in ['cancel', 'отмена']:
+        await state.clear()
+        await message.answer("❌ Присоединение к группе отменено.")
+        return
+    
+    # Get stored groups data
+    data = await state.get_data()
+    available_groups = data.get('available_groups', [])
+    
+    if not available_groups:
+        await state.clear()
+        await message.answer("❌ Ошибка: Данные групп не найдены. Пожалуйста, попробуйте /join снова.")
+        return
+    
+    # Parse selection
+    try:
+        selection = int(text)
+        if selection < 1 or selection > len(available_groups):
+            await message.answer(
+                f"❌ Неверный выбор. Пожалуйста, выберите номер от 1 до {len(available_groups)}, или отправьте 'отмена'."
+            )
+            return
+    except ValueError:
+        await message.answer(
+            "❌ Пожалуйста, отправьте номер для выбора группы, или 'отмена' для отмены."
+        )
+        return
+    
+    # Get selected group
+    selected_group = available_groups[selection - 1]
+    group_id = selected_group['group_id']
+    group_name = selected_group['group_name']
+    
+    # Add user to group
+    success = await db.add_user_to_group(user.id, group_id)
+    
+    if success:
+        await state.clear()
+        logger.info(f"User {username} (ID: {user.id}) joined group '{group_name}' (ID: {group_id})")
+        
+        await message.answer(
+            f"🎉 **Добро пожаловать в {group_name}!**\n\n"
+            f"Вы успешно присоединились к группе оплаты.\n\n"
+            f"✅ Теперь вы можете:\n"
+            f"• 💳 Загружать чеки об оплате командой /pay\n"
+            f"• 📊 Проверять свой статус командой /status\n"
+            f"• 📅 Просматривать историю платежей\n\n"
+            f"💡 Используйте /help для просмотра всех доступных команд.",
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer(
+            f"❌ Не удалось присоединиться к **{group_name}**.\n"
+            f"Это может произойти из-за:\n"
+            f"• Вы уже в этой группе\n"
+            f"• Произошла ошибка базы данных\n\n"
+            f"Пожалуйста, попробуйте снова или обратитесь к администратору.",
+            parse_mode="Markdown"
+        )
 
 
 @user_router.message(Command("status"))
@@ -127,8 +280,8 @@ async def status_command(message: types.Message):
     
     if not db or not db.pool:
         await message.answer(
-            "❌ Database is currently unavailable.\n"
-            "Please try again later."
+            "❌ База данных в настоящее время недоступна.\n"
+            "Пожалуйста, попробуйте позже."
         )
         return
     
@@ -137,8 +290,8 @@ async def status_command(message: types.Message):
     # Check if user is registered
     if not await db.is_user_registered(user_id):
         await message.answer(
-            "❌ You're not registered in any payment group yet.\n"
-            "Please contact an admin to be added to a group."
+            "❌ Вы ещё не зарегистрированы ни в одной группе оплаты.\n"
+            "Пожалуйста, обратитесь к администратору для добавления в группу."
         )
         return
     
@@ -146,8 +299,8 @@ async def status_command(message: types.Message):
     status = await db.get_user_payment_status(user_id)
     if not status:
         await message.answer(
-            "❌ Unable to retrieve your payment information.\n"
-            "Please contact an admin."
+            "❌ Не удается получить информацию о ваших платежах.\n"
+            "Пожалуйста, обратитесь к администратору."
         )
         return
     
@@ -156,17 +309,17 @@ async def status_command(message: types.Message):
     status_text = get_payment_status_text(days_until)
     
     response = (
-        f"{emoji} **Payment Status**\n\n"
-        f"👥 Group: {status.group_name}\n"
-        f"📅 Next payment due: {format_date(status.next_payment_date)}\n"
-        f"📊 Status: {status_text}\n"
+        f"{emoji} **Статус платежей**\n\n"
+        f"👥 Группа: {status.group_name}\n"
+        f"📅 Следующий платёж до: {format_date(status.next_payment_date)}\n"
+        f"📊 Статус: {status_text}\n"
     )
     
     if status.last_payment_date:
-        response += f"💰 Last payment: {format_date(status.last_payment_date)}\n"
+        response += f"💰 Последний платёж: {format_date(status.last_payment_date)}\n"
     
     if days_until <= 3:
-        response += f"\n💡 Use /pay to make a payment"
+        response += f"\n💡 Используйте /pay для совершения платежа"
     
     await message.answer(response, parse_mode="Markdown")
 
@@ -179,8 +332,8 @@ async def pay_command(message: types.Message, state: FSMContext):
     
     if not db or not db.pool:
         await message.answer(
-            "❌ Database is currently unavailable.\n"
-            "Please try again later."
+            "❌ База данных в настоящее время недоступна.\n"
+            "Пожалуйста, попробуйте позже."
         )
         return
     
@@ -189,8 +342,8 @@ async def pay_command(message: types.Message, state: FSMContext):
     # Check if user is registered
     if not await db.is_user_registered(user_id):
         await message.answer(
-            "❌ You're not registered in any payment group yet.\n"
-            "Please contact an admin to be added to a group."
+            "❌ Вы ещё не зарегистрированы ни в одной группе оплаты.\n"
+            "Пожалуйста, обратитесь к администратору для добавления в группу."
         )
         return
     
@@ -198,8 +351,8 @@ async def pay_command(message: types.Message, state: FSMContext):
     status = await db.get_user_payment_status(user_id)
     if not status:
         await message.answer(
-            "❌ Unable to retrieve your payment information.\n"
-            "Please contact an admin."
+            "❌ Не удается получить информацию о ваших платежах.\n"
+            "Пожалуйста, обратитесь к администратору."
         )
         return
     
@@ -208,10 +361,10 @@ async def pay_command(message: types.Message, state: FSMContext):
     
     # Show current status and payment options
     status_message = (
-        f"💳 **Payment for Group: {status.group_name}**\n\n"
-        f"{emoji} Next payment due: {format_date(status.next_payment_date)}\n"
-        f"📊 Status: {get_payment_status_text(days_until)}\n\n"
-        f"Please select how many months you want to pay:"
+        f"💳 **Оплата для группы: {status.group_name}**\n\n"
+        f"{emoji} Следующий платёж до: {format_date(status.next_payment_date)}\n"
+        f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
+        f"Пожалуйста, выберите на сколько месяцев хотите заплатить:"
     )
     
     await message.answer(
@@ -231,10 +384,10 @@ async def handle_months_selection(callback: types.CallbackQuery, state: FSMConte
     await state.update_data(months=months)
     
     await callback.message.edit_text(
-        f"✅ You selected **{months} month{'s' if months != 1 else ''}**\n\n"
-        f"📎 Please upload your payment receipt\n\n"
-        f"💡 Accepted formats: JPG, PNG, PDF\n"
-        f"After uploading, your payment will be processed automatically.",
+        f"✅ Вы выбрали **{months} месяц{'ев' if months > 1 else ''}**\n\n"
+        f"📎 Пожалуйста, загрузите чек об оплате\n\n"
+        f"💡 Поддерживаемые форматы: JPG, PNG, PDF\n"
+        f"После загрузки ваш платёж будет обработан автоматически.",
         parse_mode="Markdown"
     )
     
@@ -245,7 +398,7 @@ async def handle_months_selection(callback: types.CallbackQuery, state: FSMConte
 @user_router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: types.CallbackQuery, state: FSMContext):
     """Cancel payment process"""
-    await callback.message.edit_text("❌ Payment process cancelled.")
+    await callback.message.edit_text("❌ Процесс оплаты отменён.")
     await callback.answer()
     await state.clear()
 
@@ -263,9 +416,9 @@ async def handle_document_receipt(message: types.Message, state: FSMContext):
     
     if not validate_file_type(document.mime_type):
         await message.answer(
-            "❌ Unsupported file type. Please upload:\n"
-            "• Photo (JPG, PNG)\n"
-            "• PDF document"
+            "❌ Неподдерживаемый тип файла. Пожалуйста, загрузите:\n"
+            "• Фотографию (JPG, PNG)\n"
+            "• PDF документ"
         )
         return
     
@@ -279,7 +432,7 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
         months = data.get('months')
         
         if not months:
-            await message.answer("❌ Error: Payment duration not found. Please start over with /pay")
+            await message.answer("❌ Ошибка: Период оплаты не найден. Пожалуйста, начните заново с /pay")
             await state.clear()
             return
         
@@ -288,7 +441,7 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
         # Get user's group
         group = await db.get_user_group(user_id)
         if not group:
-            await message.answer("❌ Error: Unable to find your group. Please contact an admin.")
+            await message.answer("❌ Ошибка: Не удается найти вашу группу. Пожалуйста, обратитесь к администратору.")
             await state.clear()
             return
         
@@ -297,21 +450,21 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
         
         if success:
             await message.answer(
-                f"✅ **Payment Confirmed!**\n\n"
-                f"💰 Paid for: {months} month{'s' if months != 1 else ''}\n"
-                f"📅 Payment processed: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                f"👥 Group: {group.group_name}\n\n"
-                f"Thank you for your payment! 🎉\n"
-                f"Your subscription has been extended.",
+                f"✅ **Платёж подтверждён!**\n\n"
+                f"💰 Оплачено за: {months} месяц{'ев' if months > 1 else ''}\n"
+                f"📅 Платёж обработан: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                f"👥 Группа: {group.group_name}\n\n"
+                f"Спасибо за ваш платёж! 🎉\n"
+                f"Ваша подписка была продлена.",
                 parse_mode="Markdown"
             )
             
             logger.info(f"Payment processed: User {user_id} paid for {months} months in group {group.group_name}")
         else:
             await message.answer(
-                "❌ **Payment Processing Failed**\n\n"
-                "There was an error processing your payment.\n"
-                "Please contact an admin or try again later.",
+                "❌ **Ошибка обработки платежа**\n\n"
+                "Произошла ошибка при обработке вашего платежа.\n"
+                "Пожалуйста, обратитесь к администратору или попробуйте позже.",
                 parse_mode="Markdown"
             )
             logger.error(f"Payment processing failed for user {user_id}")
@@ -320,8 +473,8 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
         
     except Exception as e:
         await message.answer(
-            "❌ **An error occurred**\n\n"
-            "Please contact an admin or try again later.",
+            "❌ **Произошла ошибка**\n\n"
+            "Пожалуйста, обратитесь к администратору или попробуйте позже.",
             parse_mode="Markdown"
         )
         logger.error(f"Error in payment processing: {e}")
@@ -332,10 +485,10 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
 async def handle_invalid_receipt(message: types.Message):
     """Handle invalid receipt uploads"""
     await message.answer(
-        "❌ **Invalid receipt format**\n\n"
-        "Please upload a valid receipt:\n"
-        "• 📷 Photo (JPG, PNG)\n"
-        "• 📄 PDF document\n\n"
-        "Or use /pay to start over.",
+        "❌ **Неверный формат чека**\n\n"
+        "Пожалуйста, загрузите действительный чек:\n"
+        "• 📷 Фотографию (JPG, PNG)\n"
+        "• 📄 PDF документ\n\n"
+        "Или используйте /pay для начала заново.",
         parse_mode="Markdown"
     )
