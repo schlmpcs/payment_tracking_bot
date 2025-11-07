@@ -806,3 +806,149 @@ class Database:
         except Exception as e:
             self.logger.error(f"Failed to bulk import groups: {e}")
             return 0
+    
+    async def delete_group(self, group_id: int) -> bool:
+        """Delete a group and all associated data"""
+        if not self.pool:
+            return False
+        
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    # First, get group info for logging
+                    group = await conn.fetchrow(
+                        "SELECT group_name, display_id FROM groups WHERE group_id = $1",
+                        group_id
+                    )
+                    
+                    if not group:
+                        self.logger.warning(f"Attempted to delete non-existent group {group_id}")
+                        return False
+                    
+                    # Delete payments first (foreign key constraint)
+                    await conn.execute(
+                        "DELETE FROM payments WHERE group_id = $1",
+                        group_id
+                    )
+                    
+                    # Delete user-group associations
+                    await conn.execute(
+                        "DELETE FROM user_groups WHERE group_id = $1",
+                        group_id
+                    )
+                    
+                    # Finally delete the group
+                    await conn.execute(
+                        "DELETE FROM groups WHERE group_id = $1",
+                        group_id
+                    )
+                    
+                    self.logger.info(f"Deleted group: {group['group_name']} (ID: {group['display_id']})")
+                    return True
+                    
+        except Exception as e:
+            self.logger.error(f"Failed to delete group {group_id}: {e}")
+            return False
+    
+    async def get_group_members(self, group_id: int) -> List[dict]:
+        """Get all members of a group with their details"""
+        if not self.pool:
+            return []
+        
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT u.user_id, u.username, u.first_name, u.display_id,
+                           COUNT(p.payment_id) as total_payments,
+                           MAX(p.created_at) as last_payment
+                    FROM users u
+                    JOIN user_groups ug ON u.user_id = ug.user_id
+                    LEFT JOIN payments p ON u.user_id = p.user_id AND p.group_id = $1
+                    WHERE ug.group_id = $1
+                    GROUP BY u.user_id, u.username, u.first_name, u.display_id
+                    ORDER BY u.display_id
+                    """,
+                    group_id
+                )
+                
+                members = []
+                for row in rows:
+                    members.append({
+                        'user_id': row['user_id'],
+                        'username': row['username'],
+                        'first_name': row['first_name'],
+                        'display_id': row['display_id'],
+                        'total_payments': row['total_payments'] or 0,
+                        'last_payment': row['last_payment']
+                    })
+                
+                return members
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get group members for group {group_id}: {e}")
+            return []
+    
+    async def remove_user_from_group(self, user_id: int, group_id: int) -> bool:
+        """Remove a user from a group"""
+        if not self.pool:
+            return False
+        
+        try:
+            async with self.pool.acquire() as conn:
+                # Check if user is in the group
+                exists = await conn.fetchval(
+                    "SELECT COUNT(*) FROM user_groups WHERE user_id = $1 AND group_id = $2",
+                    user_id, group_id
+                )
+                
+                if not exists:
+                    return False
+                
+                # Remove user from group
+                await conn.execute(
+                    "DELETE FROM user_groups WHERE user_id = $1 AND group_id = $2",
+                    user_id, group_id
+                )
+                
+                self.logger.info(f"Removed user {user_id} from group {group_id}")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Failed to remove user {user_id} from group {group_id}: {e}")
+            return False
+    
+    async def get_user_payment_history(self, user_id: int) -> List[Payment]:
+        """Get payment history for a user"""
+        if not self.pool:
+            return []
+        
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT payment_id, user_id, group_id, months_paid, 
+                           receipt_file_id, created_at
+                    FROM payments 
+                    WHERE user_id = $1 
+                    ORDER BY created_at DESC
+                    """,
+                    user_id
+                )
+                
+                payments = []
+                for row in rows:
+                    payments.append(Payment(
+                        payment_id=row['payment_id'],
+                        user_id=row['user_id'],
+                        group_id=row['group_id'],
+                        months_paid=row['months_paid'],
+                        receipt_file_id=row['receipt_file_id'],
+                        created_at=row['created_at']
+                    ))
+                
+                return payments
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get payment history for user {user_id}: {e}")
+            return []

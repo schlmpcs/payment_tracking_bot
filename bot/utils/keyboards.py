@@ -32,7 +32,11 @@ def get_admin_main_keyboard() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(text="➕ Создать группу", callback_data="admin_create_group"),
-        InlineKeyboardButton(text="👤 Добавить пользователя", callback_data="admin_add_user")
+        InlineKeyboardButton(text="�️ Удалить группу", callback_data="admin_delete_group")
+    )
+    builder.row(
+        InlineKeyboardButton(text="�👤 Добавить пользователя", callback_data="admin_add_user"),
+        InlineKeyboardButton(text="👥 Управление участниками", callback_data="admin_manage_members")
     )
     builder.row(
         InlineKeyboardButton(text="� Импорт групп", callback_data="admin_import_groups")

@@ -988,6 +988,290 @@ async def cancel_import_groups(callback: types.CallbackQuery, state: FSMContext)
     await state.clear()
 
 
+@admin_router.callback_query(F.data == "admin_delete_group")
+async def delete_group_start(callback: types.CallbackQuery, state: FSMContext):
+    """Start group deletion process"""
+    user_id = callback.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+    
+    # Show available groups
+    groups = await db.get_all_groups()
+    if not groups:
+        await callback.message.edit_text("❌ Нет доступных групп для удаления.")
+        return
+    
+    groups_text = "🗑️ **Удаление группы**\n\n"
+    groups_text += "⚠️ **ВНИМАНИЕ**: Удаление группы необратимо!\n"
+    groups_text += "Будут удалены:\n• Все участники группы\n• История платежей\n• Все связанные данные\n\n"
+    groups_text += "Доступные группы:\n\n"
+    
+    for group in groups:
+        # Get member count
+        members = await db.get_group_members(group.group_id)
+        member_count = len(members)
+        
+        groups_text += (
+            f"🏷️ **{group.group_name}** (ID: {group.display_id})\n"
+            f"👥 Участников: {member_count}\n"
+            f"📅 Следующий платёж: {format_date(group.next_payment_date)}\n\n"
+        )
+    
+    groups_text += "Введите название группы для удаления:\n\n"
+    groups_text += "💡 *Используйте /admin для отмены операции*"
+    
+    await callback.message.edit_text(groups_text, parse_mode="Markdown")
+    await state.set_state(AdminStates.deleting_group_select)
+    await callback.answer()
+
+
+@admin_router.message(StateFilter(AdminStates.deleting_group_select))
+async def delete_group_confirm(message: types.Message, state: FSMContext):
+    """Confirm group deletion"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        return
+    
+    group_name = message.text.strip()
+    
+    # Find the group
+    group = await db.get_group_by_name(group_name)
+    if not group:
+        await message.answer(
+            f"❌ Группа '{group_name}' не найдена.\n\n"
+            f"Проверьте название и попробуйте снова, или используйте /admin для отмены."
+        )
+        return
+    
+    # Get members for confirmation
+    members = await db.get_group_members(group.group_id)
+    member_count = len(members)
+    
+    # Store group info for confirmation
+    await state.update_data(group=group, member_count=member_count)
+    
+    confirmation_text = (
+        f"⚠️ **ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ**\n\n"
+        f"Вы действительно хотите удалить группу?\n\n"
+        f"🏷️ **Группа**: {group.group_name} (ID: {group.display_id})\n"
+        f"👥 **Участников**: {member_count}\n"
+        f"📅 **Дата платежа**: {format_date(group.next_payment_date)}\n\n"
+        f"🚨 **ЭТО ДЕЙСТВИЕ НЕОБРАТИМО!**\n"
+        f"Будут удалены:\n"
+        f"• Все {member_count} участников\n"
+        f"• Вся история платежей\n"
+        f"• Все связанные данные\n\n"
+        f"Вы уверены?"
+    )
+    
+    # Create confirmation keyboard
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(text="🗑️ ДА, УДАЛИТЬ", callback_data="confirm_delete_group"),
+        types.InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_delete_group")
+    )
+    
+    await message.answer(
+        confirmation_text,
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    
+    await state.set_state(AdminStates.deleting_group_confirm)
+
+
+@admin_router.callback_query(AdminStates.deleting_group_confirm, F.data == "confirm_delete_group")
+async def execute_group_deletion(callback: types.CallbackQuery, state: FSMContext):
+    """Execute group deletion"""
+    try:
+        data = await state.get_data()
+        group = data.get('group')
+        member_count = data.get('member_count', 0)
+        
+        if not group:
+            await callback.message.edit_text("❌ Данные группы не найдены.")
+            await state.clear()
+            return
+        
+        await callback.message.edit_text("⏳ Удаление группы...")
+        
+        # Delete the group
+        success = await db.delete_group(group.group_id)
+        
+        if success:
+            await callback.message.edit_text(
+                f"✅ **Группа успешно удалена!**\n\n"
+                f"🗑️ Удалена группа: {group.group_name} (ID: {group.display_id})\n"
+                f"👥 Удалено участников: {member_count}\n"
+                f"📅 Время удаления: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"Все связанные данные были удалены из базы данных.",
+                parse_mode="Markdown"
+            )
+        else:
+            await callback.message.edit_text(
+                f"❌ **Ошибка при удалении группы**\n\n"
+                f"Не удалось удалить группу {group.group_name}.\n"
+                f"Пожалуйста, попробуйте позже или обратитесь к техподдержке."
+            )
+        
+    except Exception as e:
+        logger.error(f"Error in execute_group_deletion: {e}")
+        await callback.message.edit_text("❌ Произошла ошибка при удалении группы.")
+    
+    finally:
+        await state.clear()
+
+
+@admin_router.callback_query(AdminStates.deleting_group_confirm, F.data == "cancel_delete_group")
+async def cancel_group_deletion(callback: types.CallbackQuery, state: FSMContext):
+    """Cancel group deletion"""
+    await callback.message.edit_text("❌ Удаление группы отменено.")
+    await state.clear()
+
+
+@admin_router.callback_query(F.data == "admin_manage_members")
+async def manage_members_start(callback: types.CallbackQuery, state: FSMContext):
+    """Start member management"""
+    user_id = callback.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+    
+    groups = await db.get_all_groups()
+    if not groups:
+        await callback.message.edit_text("❌ Нет доступных групп.")
+        return
+    
+    groups_text = "👥 **Управление участниками групп**\n\n"
+    groups_text += "Выберите группу для просмотра участников:\n\n"
+    
+    for group in groups:
+        members = await db.get_group_members(group.group_id)
+        member_count = len(members)
+        
+        groups_text += (
+            f"🏷️ **{group.group_name}** (ID: {group.display_id})\n"
+            f"👥 Участников: {member_count}\n\n"
+        )
+    
+    groups_text += "Введите название группы:\n\n"
+    groups_text += "💡 *Используйте /admin для отмены операции*"
+    
+    await callback.message.edit_text(groups_text, parse_mode="Markdown")
+    await state.set_state(AdminStates.removing_user_select_group)
+    await callback.answer()
+
+
+@admin_router.message(StateFilter(AdminStates.removing_user_select_group))
+async def show_group_members(message: types.Message, state: FSMContext):
+    """Show group members and management options"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        return
+    
+    group_name = message.text.strip()
+    
+    group = await db.get_group_by_name(group_name)
+    if not group:
+        await message.answer(
+            f"❌ Группа '{group_name}' не найдена.\n\n"
+            f"Проверьте название и попробуйте снова, или используйте /admin для отмены."
+        )
+        return
+    
+    members = await db.get_group_members(group.group_id)
+    
+    if not members:
+        await message.answer(
+            f"📭 **Группа {group.group_name} пуста**\n\n"
+            f"В этой группе пока нет участников."
+        )
+        await state.clear()
+        return
+    
+    members_text = (
+        f"👥 **Участники группы {group.group_name}**\n"
+        f"🆔 ID группы: {group.display_id}\n\n"
+    )
+    
+    for member in members:
+        last_payment = "Никогда" if not member['last_payment'] else member['last_payment'].strftime('%Y-%m-%d')
+        members_text += (
+            f"👤 **{member['first_name'] or 'N/A'}** (@{member['username'] or 'нет'})\n"
+            f"🆔 ID: {member['display_id']} | Telegram ID: {member['user_id']}\n"
+            f"💳 Платежей: {member['total_payments']} | Последний: {last_payment}\n\n"
+        )
+    
+    members_text += f"Всего участников: {len(members)}\n\n"
+    members_text += "Для удаления пользователя из группы введите его Telegram ID:"
+    
+    await message.answer(members_text, parse_mode="Markdown")
+    await state.update_data(group=group)
+    await state.set_state(AdminStates.removing_user_select_user)
+
+
+@admin_router.message(StateFilter(AdminStates.removing_user_select_user))
+async def remove_user_from_group(message: types.Message, state: FSMContext):
+    """Remove selected user from group"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        return
+    
+    try:
+        target_user_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ Неверный формат ID. Введите числовой Telegram ID пользователя.")
+        return
+    
+    data = await state.get_data()
+    group = data.get('group')
+    
+    if not group:
+        await message.answer("❌ Данные группы не найдены. Попробуйте снова.")
+        await state.clear()
+        return
+    
+    # Check if user is in the group
+    members = await db.get_group_members(group.group_id)
+    target_member = next((m for m in members if m['user_id'] == target_user_id), None)
+    
+    if not target_member:
+        await message.answer(
+            f"❌ Пользователь с ID {target_user_id} не найден в группе {group.group_name}."
+        )
+        return
+    
+    # Remove user from group
+    success = await db.remove_user_from_group(target_user_id, group.group_id)
+    
+    if success:
+        await message.answer(
+            f"✅ **Пользователь удалён из группы!**\n\n"
+            f"👤 Пользователь: {target_member['first_name']} (@{target_member['username'] or 'нет'})\n"
+            f"🆔 ID: {target_member['display_id']}\n"
+            f"🏷️ Группа: {group.group_name}\n"
+            f"📅 Время удаления: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer(
+            f"❌ **Ошибка при удалении пользователя**\n\n"
+            f"Не удалось удалить пользователя из группы."
+        )
+    
+    await state.clear()
+
+
 # Handle any unrecognized admin callback
 @admin_router.callback_query(F.data.startswith("admin_"))
 async def handle_unknown_admin_action(callback: types.CallbackQuery):

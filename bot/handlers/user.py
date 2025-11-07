@@ -111,9 +111,12 @@ async def help_command(message: types.Message):
         "🤖 **Справка по боту Spotify Payment**\n\n"
         "**Доступные команды:**\n"
         "🏠 /start - Приветственное сообщение и обзор статуса\n"
+        "🆔 /id - Показать ваш ID для администратора\n"
         "🚪 /join - Присоединиться к группе оплаты\n"
-        "💳 /pay - Загрузить чек об оплате\n"
+        "� /leave - Покинуть текущую группу\n"
+        "�💳 /pay - Загрузить чек об оплате\n"
         "📊 /status - Проверить статус ваших платежей\n"
+        "📈 /history - Показать историю платежей\n"
         "❓ /help - Показать эту справку\n\n"
         "**Как оплатить:**\n"
         "1. Используйте команду /pay\n"
@@ -156,6 +159,160 @@ async def id_command(message: types.Message):
     id_text += f"\n💡 **Для администраторов:** Чтобы сделать {username} администратором, добавьте этот ID в список TG_ADMIN_IDS в файле .env."
     
     await message.answer(id_text, parse_mode="Markdown")
+
+
+@user_router.message(Command("leave"))
+async def leave_group_command(message: types.Message):
+    """Handle /leave command - leave current group"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+    
+    user_id = message.from_user.id
+    
+    # Check if user is in any group
+    group = await db.get_user_group(user_id)
+    if not group:
+        await message.answer(
+            "ℹ️ **Вы не состоите ни в одной группе**\n\n"
+            "Используйте /join для поиска доступных групп."
+        )
+        return
+    
+    # Show confirmation
+    confirmation_text = (
+        f"🚪 **Покинуть группу**\n\n"
+        f"Вы действительно хотите покинуть группу?\n\n"
+        f"🏷️ **Группа**: {group.group_name}\n"
+        f"📅 **Следующий платёж**: {format_date(group.next_payment_date)}\n\n"
+        f"⚠️ **Внимание**: После выхода из группы вам потребуется заново присоединиться через /join"
+    )
+    
+    # Create confirmation keyboard
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(text="🚪 Да, покинуть", callback_data=f"leave_group_{group.group_id}"),
+        types.InlineKeyboardButton(text="❌ Остаться", callback_data="cancel_leave_group")
+    )
+    
+    await message.answer(
+        confirmation_text,
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+
+
+@user_router.callback_query(F.data.startswith("leave_group_"))
+async def confirm_leave_group(callback: types.CallbackQuery):
+    """Confirm leaving group"""
+    try:
+        group_id = int(callback.data.split("_")[-1])
+        user_id = callback.from_user.id
+        
+        # Get group info before removing
+        group = await db.get_user_group(user_id)
+        if not group or group.group_id != group_id:
+            await callback.message.edit_text("❌ Группа не найдена или вы не состоите в ней.")
+            return
+        
+        # Remove user from group
+        success = await db.remove_user_from_group(user_id, group_id)
+        
+        if success:
+            await callback.message.edit_text(
+                f"✅ **Вы покинули группу!**\n\n"
+                f"🏷️ Группа: {group.group_name}\n"
+                f"📅 Время выхода: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"Используйте /join для поиска новых групп.",
+                parse_mode="Markdown"
+            )
+        else:
+            await callback.message.edit_text("❌ Ошибка при выходе из группы. Попробуйте позже.")
+        
+    except Exception as e:
+        logger.error(f"Error in confirm_leave_group: {e}")
+        await callback.message.edit_text("❌ Произошла ошибка при выходе из группы.")
+
+
+@user_router.callback_query(F.data == "cancel_leave_group")
+async def cancel_leave_group(callback: types.CallbackQuery):
+    """Cancel leaving group"""
+    await callback.message.edit_text("✅ Вы остались в группе.")
+
+
+@user_router.message(Command("history"))
+async def payment_history_command(message: types.Message):
+    """Handle /history command - show payment history"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+    
+    user_id = message.from_user.id
+    
+    # Get user's group
+    group = await db.get_user_group(user_id)
+    if not group:
+        await message.answer(
+            "ℹ️ **История платежей недоступна**\n\n"
+            "Вы не состоите ни в одной группе.\n"
+            "Используйте /join для поиска доступных групп."
+        )
+        return
+    
+    # Get payment history
+    try:
+        payments = await db.get_user_payment_history(user_id)
+        
+        if not payments:
+            await message.answer(
+                f"📭 **История платежей пуста**\n\n"
+                f"🏷️ Группа: {group.group_name}\n"
+                f"💡 Используйте /pay для загрузки первого чека об оплате."
+            )
+            return
+        
+        history_text = (
+            f"📊 **История ваших платежей**\n"
+            f"🏷️ Группа: {group.group_name}\n\n"
+        )
+        
+        total_months = 0
+        total_amount = 0
+        
+        for payment in payments[-10:]:  # Show last 10 payments
+            payment_date = payment.created_at.strftime('%Y-%m-%d')
+            amount = payment.months_paid * settings.bot_default_payment_price
+            total_months += payment.months_paid
+            total_amount += amount
+            
+            history_text += (
+                f"💳 **{payment_date}**\n"
+                f"   📅 Месяцев: {payment.months_paid}\n"
+                f"   💰 Сумма: {amount:.2f}€\n\n"
+            )
+        
+        if len(payments) > 10:
+            history_text += f"... и ещё {len(payments) - 10} платежей\n\n"
+        
+        history_text += (
+            f"📈 **Итого:**\n"
+            f"💳 Всего платежей: {len(payments)}\n"
+            f"📅 Всего месяцев: {total_months}\n"
+            f"💰 Общая сумма: {total_amount:.2f}€"
+        )
+        
+        await message.answer(history_text, parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Error getting payment history for user {user_id}: {e}")
+        await message.answer("❌ Ошибка при получении истории платежей.")
 
 
 @user_router.message(Command("join"))
