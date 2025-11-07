@@ -36,10 +36,15 @@ def init_user_handlers(database: Database, bot_settings: Settings):
 
 
 @user_router.message(Command("start"))
-async def start_command(message: types.Message):
+async def start_command(message: types.Message, state: FSMContext):
     """Handle /start command"""
     if message.chat.type != ChatType.PRIVATE:
         return
+    
+    # Clear any active state (allows canceling any operation)
+    current_state = await state.get_state()
+    if current_state:
+        await state.clear()
     
     user = message.from_user
     username = user.username or user.first_name or "User"
@@ -200,7 +205,7 @@ async def join_command(message: types.Message, state: FSMContext):
         groups_text += f"**{i}.** {group['group_name']} ({member_text})\n"
     
     groups_text += f"\n💡 **Пример:** Отправьте `{1}` чтобы присоединиться к первой группе"
-    groups_text += f"\n❌ Отправьте `отмена` для отмены"
+    groups_text += f"\n❌ Отправьте `отмена` или используйте /start для отмены"
     
     await message.answer(groups_text, parse_mode="Markdown")
     
@@ -396,7 +401,8 @@ async def handle_months_selection(callback: types.CallbackQuery, state: FSMConte
         f"✅ Вы выбрали **{months} месяц{'ев' if months > 1 else ''}**\n\n"
         f"📎 Пожалуйста, загрузите чек об оплате\n\n"
         f"💡 Поддерживаемые форматы: JPG, PNG, PDF\n"
-        f"После загрузки ваш платёж будет обработан автоматически.",
+        f"После загрузки ваш платёж будет обработан автоматически.\n\n"
+        f"💡 *Используйте /start для отмены операции*",
         parse_mode="Markdown"
     )
     
@@ -434,6 +440,54 @@ async def handle_document_receipt(message: types.Message, state: FSMContext):
     await process_receipt_upload(message, state, document.file_id)
 
 
+async def forward_receipt_to_storage(message: types.Message, user_info: dict, payment_info: dict) -> bool:
+    """
+    Forward receipt to storage chat for audit trail
+    
+    Args:
+        message: Original message with receipt
+        user_info: Dict with user details (id, username, first_name, etc.)
+        payment_info: Dict with payment details (months, group_name, amount, etc.)
+    
+    Returns:
+        bool: True if forwarded successfully, False otherwise
+    """
+    if not settings.tg_receipt_storage_chat_id:
+        return True  # No storage chat configured, skip silently
+    
+    try:
+        # Create audit message with context
+        audit_text = (
+            f"💳 **ПЛАТЁЖНЫЙ ЧЕК** - Получен новый платёж\n\n"
+            f"👤 **Пользователь:**\n"
+            f"• ID: `{user_info['id']}`\n"
+            f"• Имя: {user_info.get('first_name', 'N/A')}\n"
+            f"• Username: @{user_info.get('username', 'нет')}\n\n"
+            f"💰 **Детали платежа:**\n"
+            f"• Группа: {payment_info['group_name']}\n"
+            f"• Месяцев оплачено: {payment_info['months']}\n"
+            f"• Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            f"📸 **Чек во вложении ниже:**"
+        )
+        
+        # Send audit message
+        await message.bot.send_message(
+            chat_id=settings.tg_receipt_storage_chat_id,
+            text=audit_text,
+            parse_mode="Markdown"
+        )
+        
+        # Forward the original receipt
+        await message.forward(settings.tg_receipt_storage_chat_id)
+        
+        logger.info(f"Receipt forwarded to storage chat for user {user_info['id']}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to forward receipt to storage chat: {e}")
+        return False
+
+
 async def process_receipt_upload(message: types.Message, state: FSMContext, file_id: str):
     """Process receipt upload and record payment"""
     try:
@@ -469,6 +523,22 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
             )
             
             logger.info(f"Payment processed: User {user_id} paid for {months} months in group {group.group_name}")
+            
+            # Forward receipt to storage chat for audit trail
+            user_info = {
+                'id': user_id,
+                'username': message.from_user.username,
+                'first_name': message.from_user.first_name,
+                'last_name': message.from_user.last_name
+            }
+            
+            payment_info = {
+                'months': months,
+                'group_name': group.group_name,
+                'group_id': group.group_id
+            }
+            
+            await forward_receipt_to_storage(message, user_info, payment_info)
         else:
             await message.answer(
                 "❌ **Ошибка обработки платежа**\n\n"

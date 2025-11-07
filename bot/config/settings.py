@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # Telegram settings
     tg_token: SecretStr = Field(..., description="Telegram bot token")
     tg_admin_ids: List[int] = Field(..., description="List of admin user IDs")
+    tg_receipt_storage_chat_id: Optional[int] = Field(None, description="Chat ID for storing receipt copies (audit trail)")
     
     # Database settings
     db_host: str = Field(..., description="Database host")

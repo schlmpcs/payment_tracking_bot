@@ -35,7 +35,10 @@ def get_admin_main_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="👤 Добавить пользователя", callback_data="admin_add_user")
     )
     builder.row(
-        InlineKeyboardButton(text="📅 Обновить дату платежа", callback_data="admin_update_due_date")
+        InlineKeyboardButton(text="� Импорт групп", callback_data="admin_import_groups")
+    )
+    builder.row(
+        InlineKeyboardButton(text="�📅 Обновить дату платежа", callback_data="admin_update_due_date")
     )
     builder.row(
         InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats"),

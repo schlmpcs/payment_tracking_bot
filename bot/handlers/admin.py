@@ -39,7 +39,7 @@ def init_admin_handlers(database: Database, bot_settings: Settings):
 
 
 @admin_router.message(Command("admin"))
-async def admin_command(message: types.Message):
+async def admin_command(message: types.Message, state: FSMContext):
     """Handle /admin command"""
     if message.chat.type != ChatType.PRIVATE:
         return
@@ -52,6 +52,12 @@ async def admin_command(message: types.Message):
     if not db or not db.pool:
         await message.answer("❌ База данных в настоящее время недоступна.")
         return
+    
+    # Clear any active state (allows canceling any operation)
+    current_state = await state.get_state()
+    if current_state:
+        await state.clear()
+        await message.answer("✅ Предыдущая операция отменена.\n")
     
     await message.answer(
         "🔧 **Панель администратора**\n\n"
@@ -264,6 +270,32 @@ async def view_overdue_users(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@admin_router.callback_query(F.data == "admin_import_groups")
+async def import_groups_start(callback: types.CallbackQuery, state: FSMContext):
+    """Start group import process"""
+    user_id = callback.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.importing_groups_file)
+    await callback.message.edit_text(
+        "📊 **Импорт групп из Excel файла**\n\n"
+        "Отправьте Excel файл (.xlsx) с данными для импорта групп.\n\n"
+        "**Формат файла:**\n"
+        "• Столбец A: Названия групп (например: spotify 001)\n"
+        "• Столбец B: ID групп (например: 001)\n\n"
+        "**Пример:**\n"
+        "```\n"
+        "spotify 001 | 001\n"
+        "spotify 002 | 002\n"
+        "```\n\n"
+        "📎 Прикрепите файл к следующему сообщению или используйте /admin для отмены:",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
 @admin_router.callback_query(F.data == "admin_create_group")
 async def create_group_start(callback: types.CallbackQuery, state: FSMContext):
     """Start group creation process"""
@@ -274,7 +306,9 @@ async def create_group_start(callback: types.CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         "➕ **Создать новую группу**\n\n"
-        "Пожалуйста, введите название группы:"
+        "Пожалуйста, введите название группы:\n\n"
+        "💡 *Используйте /admin для отмены операции*",
+        parse_mode="Markdown"
     )
     
     await state.set_state(AdminStates.creating_group)
@@ -330,7 +364,9 @@ async def add_user_start(callback: types.CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         "👤 **Добавить пользователя в группу**\n\n"
-        "Пожалуйста, введите Telegram ID пользователя (числовой):"
+        "Пожалуйста, введите Telegram ID пользователя (числовой):\n\n"
+        "💡 *Используйте /admin для отмены операции*",
+        parse_mode="Markdown"
     )
     
     await state.set_state(AdminStates.adding_user_username)
@@ -368,7 +404,9 @@ async def add_user_get_group(message: types.Message, state: FSMContext):
     
     await message.answer(
         f"{groups_text}\n"
-        f"Please enter the group name to add user {target_user_id} to:"
+        f"Please enter the group name to add user {target_user_id} to:\n\n"
+        f"💡 *Используйте /admin для отмены операции*",
+        parse_mode="Markdown"
     )
     
     await state.set_state(AdminStates.adding_user_group)
@@ -443,7 +481,8 @@ async def update_due_date_start(callback: types.CallbackQuery, state: FSMContext
             f"📊 Status: {get_payment_status_text(days_until)}\n\n"
         )
     
-    groups_text += "Please enter the group name you want to update:"
+    groups_text += "Please enter the group name you want to update:\n\n"
+    groups_text += "💡 *Используйте /admin для отмены операции*"
     
     await callback.message.edit_text(groups_text, parse_mode="Markdown")
     await state.set_state(AdminStates.updating_due_date_group)
@@ -477,7 +516,7 @@ async def update_due_date_get_date(message: types.Message, state: FSMContext):
         f"Examples:\n"
         f"• `2025-11-15` (November 15, 2025)\n"
         f"• `2025-12-01` (December 1, 2025)\n\n"
-        f"Or type `cancel` to cancel.",
+        f"💡 *Используйте /admin для отмены операции*",
         parse_mode="Markdown"
     )
     
@@ -638,6 +677,74 @@ async def handle_test_notifications(callback: types.CallbackQuery):
             f"Check the bot logs for more details.",
             parse_mode="Markdown"
         )
+
+
+@admin_router.message(Command("test_receipt_storage"))
+async def test_receipt_storage_command(message: types.Message):
+    """Test receipt storage configuration"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+    
+    if not settings.tg_receipt_storage_chat_id:
+        await message.answer(
+            "⚠️ **Хранилище чеков не настроено**\n\n"
+            "Для включения функции хранения чеков:\n"
+            "1. Создайте приватный чат/группу для хранения чеков\n"
+            "2. Получите Chat ID этого чата\n"
+            "3. Добавьте в .env файл:\n"
+            "`TG_RECEIPT_STORAGE_CHAT_ID=ваш_chat_id`\n\n"
+            "📖 Подробные инструкции в файле RECEIPT_STORAGE_README.md",
+            parse_mode="Markdown"
+        )
+        return
+    
+    try:
+        # Test sending message to storage chat
+        test_message = (
+            f"🧪 **ТЕСТ ХРАНИЛИЩА ЧЕКОВ**\n\n"
+            f"✅ Соединение с хранилищем чеков успешно!\n"
+            f"📅 Время теста: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"👤 Инициатор: {message.from_user.first_name} (ID: {message.from_user.id})\n\n"
+            f"💡 Это тестовое сообщение для проверки настроек."
+        )
+        
+        await message.bot.send_message(
+            chat_id=settings.tg_receipt_storage_chat_id,
+            text=test_message,
+            parse_mode="Markdown"
+        )
+        
+        await message.answer(
+            f"✅ **Тест хранилища чеков прошёл успешно!**\n\n"
+            f"📊 Chat ID: `{settings.tg_receipt_storage_chat_id}`\n"
+            f"📨 Тестовое сообщение отправлено в хранилище\n\n"
+            f"🔧 Все новые чеки будут автоматически пересылаться в это хранилище.",
+            parse_mode="Markdown"
+        )
+        
+        logger.info(f"Receipt storage test successful for chat_id: {settings.tg_receipt_storage_chat_id}")
+        
+    except Exception as e:
+        error_msg = str(e)
+        await message.answer(
+            f"❌ **Ошибка теста хранилища чеков**\n\n"
+            f"📊 Chat ID: `{settings.tg_receipt_storage_chat_id}`\n"
+            f"⚠️ Ошибка: {error_msg}\n\n"
+            f"**Возможные причины:**\n"
+            f"• Неверный Chat ID\n"
+            f"• Бот не добавлен в целевой чат\n"
+            f"• Нет прав на отправку сообщений\n"
+            f"• Чат заблокирован или удалён\n\n"
+            f"📖 Проверьте инструкции в RECEIPT_STORAGE_README.md",
+            parse_mode="Markdown"
+        )
+        
+        logger.error(f"Receipt storage test failed: {e}")
 
 
 @admin_router.message(Command("import_groups"))

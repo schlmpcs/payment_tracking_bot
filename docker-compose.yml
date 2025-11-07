@@ -1,0 +1,13 @@
+# Docker Compose for local development and testing
+version: '3.8'
+
+services:
+  spotify-bot:
+    build: .
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
