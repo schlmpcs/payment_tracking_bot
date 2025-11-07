@@ -734,3 +734,75 @@ class Database:
         except Exception as e:
             self.logger.error(f"Failed to check user registration for {user_id}: {e}")
             return False
+    
+    async def get_group_by_display_id(self, display_id: int) -> Optional[Group]:
+        """Get group by display ID"""
+        if not self.pool:
+            return None
+        
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT group_id, group_name, next_payment_date, created_at, display_id
+                    FROM groups 
+                    WHERE display_id = $1
+                    """,
+                    display_id
+                )
+                
+                if row:
+                    return Group(
+                        group_id=row['group_id'],
+                        group_name=row['group_name'],
+                        next_payment_date=row['next_payment_date'],
+                        created_at=row['created_at'],
+                        display_id=row['display_id']
+                    )
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get group by display_id {display_id}: {e}")
+            return None
+    
+    async def bulk_import_groups(self, groups_data: List[dict]) -> int:
+        """Import multiple groups at once"""
+        if not self.pool:
+            return 0
+        
+        success_count = 0
+        
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    for group_data in groups_data:
+                        try:
+                            # Get next payment date (30 days from now)
+                            next_payment_date = datetime.now() + timedelta(days=30)
+                            
+                            # Insert group
+                            group_id = await conn.fetchval(
+                                """
+                                INSERT INTO groups (group_name, next_payment_date, display_id) 
+                                VALUES ($1, $2, $3)
+                                RETURNING group_id
+                                """,
+                                group_data['name'],
+                                next_payment_date,
+                                group_data['display_id']
+                            )
+                            
+                            if group_id:
+                                success_count += 1
+                                self.logger.info(f"Created group: {group_data['name']} (ID: {group_data['display_id']})")
+                            
+                        except Exception as e:
+                            self.logger.error(f"Failed to create group {group_data['name']}: {e}")
+                            continue
+                    
+                    self.logger.info(f"Bulk import completed: {success_count}/{len(groups_data)} groups created")
+                    return success_count
+                    
+        except Exception as e:
+            self.logger.error(f"Failed to bulk import groups: {e}")
+            return 0

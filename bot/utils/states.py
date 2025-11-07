@@ -24,3 +24,5 @@ class AdminStates(StatesGroup):
     deleting_confirmation = State()
     updating_due_date_group = State()
     updating_due_date_date = State()
+    importing_groups_file = State()
+    importing_groups_confirm = State()

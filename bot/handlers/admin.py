@@ -3,11 +3,14 @@ Admin command handlers for the Spotify Payment Bot
 """
 
 import logging
+import tempfile
+import os
 from datetime import datetime, timedelta
 from aiogram import Router, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.enums import ChatType
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.database.operations import Database
 from bot.config.settings import Settings
@@ -635,6 +638,247 @@ async def handle_test_notifications(callback: types.CallbackQuery):
             f"Check the bot logs for more details.",
             parse_mode="Markdown"
         )
+
+
+@admin_router.message(Command("import_groups"))
+async def import_groups_command(message: types.Message, state: FSMContext):
+    """Handle /import_groups command for bulk group creation from Excel"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+    
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+    
+    await state.set_state(AdminStates.importing_groups_file)
+    await message.answer(
+        "📊 **Импорт групп из Excel файла**\n\n"
+        "Отправьте Excel файл (.xlsx) с данными для импорта групп.\n\n"
+        "**Формат файла:**\n"
+        "• Столбец A: Названия групп (например: spotify 001)\n"
+        "• Столбец B: ID групп (например: 001)\n\n"
+        "**Пример:**\n"
+        "```\n"
+        "spotify 001 | 001\n"
+        "spotify 002 | 002\n"
+        "```\n\n"
+        "📎 Прикрепите файл к следующему сообщению:",
+        parse_mode="Markdown"
+    )
+
+
+@admin_router.message(AdminStates.importing_groups_file, F.document)
+async def handle_import_file(message: types.Message, state: FSMContext):
+    """Handle Excel file upload for group import"""
+    file_path = None
+    try:
+        if not message.document:
+            await message.answer("❌ Пожалуйста, отправьте файл.")
+            return
+        
+        # Check file extension
+        file_name = message.document.file_name
+        if not file_name or not file_name.lower().endswith('.xlsx'):
+            await message.answer(
+                "❌ Неподдерживаемый формат файла.\n"
+                "Пожалуйста, отправьте Excel файл (.xlsx)."
+            )
+            return
+        
+        # Check file size (limit to 10MB)
+        if message.document.file_size > 10 * 1024 * 1024:
+            await message.answer("❌ Файл слишком большой. Максимальный размер: 10 MB.")
+            return
+        
+        await message.answer("⏳ Обработка файла...")
+        
+        # Download file
+        file = await message.bot.get_file(message.document.file_id)
+        
+        # Create temporary file with proper extension
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as temp_file:
+            file_path = temp_file.name
+        
+        await message.bot.download_file(file.file_path, file_path)
+        
+        # Parse Excel file
+        from openpyxl import load_workbook
+        
+        try:
+            workbook = load_workbook(file_path)
+            sheet = workbook.active
+            
+            groups_data = []
+            errors = []
+            
+            for row_num, row in enumerate(sheet.iter_rows(min_row=1, values_only=True), 1):
+                if not row or len(row) < 2:
+                    continue
+                
+                group_name = str(row[0]).strip() if row[0] else ""
+                group_id = str(row[1]).strip() if row[1] else ""
+                
+                # Skip header row (if first row contains non-numeric ID)
+                if row_num == 1 and not group_id.isdigit():
+                    continue
+                
+                if not group_name or not group_id:
+                    errors.append(f"Строка {row_num}: пустые данные")
+                    continue
+                
+                # Validate group ID format (should be 3 digits)
+                if not group_id.isdigit() or len(group_id) != 3:
+                    errors.append(f"Строка {row_num}: ID должен быть 3-значным числом")
+                    continue
+                
+                groups_data.append({
+                    'name': group_name,
+                    'display_id': group_id,  # Keep as string for VARCHAR(3)
+                    'row': row_num
+                })
+            
+            if not groups_data:
+                await message.answer("❌ В файле не найдено валидных данных для импорта.")
+                await state.clear()
+                return
+            
+            # Check for duplicate IDs in file
+            display_ids = [group['display_id'] for group in groups_data]
+            if len(display_ids) != len(set(display_ids)):
+                errors.append("Обнаружены дублирующиеся ID в файле")
+            
+            # Check for existing groups in database
+            existing_display_ids = []
+            for group_data in groups_data:
+                existing_group = await db.get_group_by_display_id(group_data['display_id'])
+                if existing_group:
+                    existing_display_ids.append(group_data['display_id'])
+            
+            if existing_display_ids:
+                errors.append(f"ID уже существуют в базе: {', '.join(map(str, existing_display_ids))}")
+            
+            # Store data for confirmation
+            await state.update_data(groups_data=groups_data, errors=errors)
+            
+            # Show preview
+            preview_text = "📋 **Предварительный просмотр импорта:**\n\n"
+            preview_text += f"✅ Найдено групп для импорта: {len(groups_data)}\n\n"
+            
+            if errors:
+                preview_text += f"⚠️ **Ошибки ({len(errors)}):**\n"
+                for error in errors[:5]:  # Show first 5 errors
+                    preview_text += f"• {error}\n"
+                if len(errors) > 5:
+                    preview_text += f"• ... и ещё {len(errors) - 5} ошибок\n"
+                preview_text += "\n"
+            
+            if groups_data and not errors:
+                preview_text += "**Группы для создания:**\n"
+                for i, group in enumerate(groups_data[:10]):  # Show first 10
+                    preview_text += f"• {group['name']} (ID: {group['display_id']})\n"
+                if len(groups_data) > 10:
+                    preview_text += f"• ... и ещё {len(groups_data) - 10} групп\n"
+                
+                await state.set_state(AdminStates.importing_groups_confirm)
+                
+                # Create custom keyboard for import confirmation
+                builder = InlineKeyboardBuilder()
+                builder.row(
+                    types.InlineKeyboardButton(text="✅ Да", callback_data="confirm_yes"),
+                    types.InlineKeyboardButton(text="❌ Нет", callback_data="confirm_no")
+                )
+                
+                await message.answer(
+                    preview_text,
+                    parse_mode="Markdown",
+                    reply_markup=builder.as_markup()
+                )
+            else:
+                await message.answer(
+                    preview_text + "\n❌ Импорт невозможен из-за ошибок в данных.",
+                    parse_mode="Markdown"
+                )
+                await state.clear()
+        
+        except Exception as e:
+            logger.error(f"Error parsing Excel file: {e}")
+            await message.answer(
+                "❌ Ошибка при обработке файла.\n"
+                "Убедитесь, что файл не повреждён и соответствует требуемому формату."
+            )
+            await state.clear()
+        
+        finally:
+            # Clean up temp file
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.unlink(file_path)
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp file {file_path}: {cleanup_error}")
+    
+    except Exception as e:
+        logger.error(f"Error in handle_import_file: {e}")
+        await message.answer("❌ Произошла ошибка при обработке файла.")
+        await state.clear()
+        # Cleanup file if it exists
+        if 'file_path' in locals() and file_path and os.path.exists(file_path):
+            try:
+                os.unlink(file_path)
+            except:
+                pass
+
+
+@admin_router.message(AdminStates.importing_groups_file)
+async def handle_import_file_invalid(message: types.Message):
+    """Handle invalid file uploads during import"""
+    await message.answer(
+        "❌ Пожалуйста, отправьте Excel файл (.xlsx).\n"
+        "Или используйте /admin для отмены операции."
+    )
+
+
+@admin_router.callback_query(AdminStates.importing_groups_confirm, F.data == "confirm_yes")
+async def confirm_import_groups(callback: types.CallbackQuery, state: FSMContext):
+    """Confirm and execute group import"""
+    try:
+        data = await state.get_data()
+        groups_data = data.get('groups_data', [])
+        
+        if not groups_data:
+            await callback.message.edit_text("❌ Данные для импорта не найдены.")
+            await state.clear()
+            return
+        
+        await callback.message.edit_text("⏳ Импорт групп в процессе...")
+        
+        # Import groups
+        success_count = await db.bulk_import_groups(groups_data)
+        
+        await callback.message.edit_text(
+            f"✅ **Импорт завершён!**\n\n"
+            f"Успешно создано групп: {success_count} из {len(groups_data)}\n\n"
+            f"Используйте /admin для управления группами.",
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in confirm_import_groups: {e}")
+        await callback.message.edit_text("❌ Произошла ошибка при импорте групп.")
+    
+    finally:
+        await state.clear()
+
+
+@admin_router.callback_query(AdminStates.importing_groups_confirm, F.data == "confirm_no")
+async def cancel_import_groups(callback: types.CallbackQuery, state: FSMContext):
+    """Cancel group import"""
+    await callback.message.edit_text("❌ Импорт групп отменён.")
+    await state.clear()
 
 
 # Handle any unrecognized admin callback

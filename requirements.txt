@@ -1,4 +1,6 @@
-# Dependencies for Spotify Family Payment Bot# Telegram Bot Framework
+# Dependencies for Spotify Family Payment Bot
+
+# Telegram Bot Framework
 aiogram>=3.0.0
 asyncpg>=0.28.0
 
@@ -11,13 +13,16 @@ aiofiles>=23.0.0
 python-dotenv>=1.0.0
 aiopg>=1.4.0
 
-# Async PostgreSQL driverpsycopg2-binary>=2.9.0
+# Async PostgreSQL driver
+psycopg2-binary>=2.9.0
 asyncpg>=0.28.0
 
-# Configuration and Settings
 # Configuration Management
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
+
+# Excel file processing
+openpyxl>=3.1.0
 
 # Date and Time Utilities
 python-dateutil>=2.8.0
