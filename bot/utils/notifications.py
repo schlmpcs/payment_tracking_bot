@@ -4,7 +4,7 @@ Background notification system for payment reminders
 
 import asyncio
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import List
 from aiogram import Bot
 
@@ -54,7 +54,7 @@ class NotificationScheduler:
                 
                 # If it's already past 9 AM today, schedule for tomorrow
                 if now.time() >= time(9, 0):
-                    next_run = next_run.replace(day=next_run.day + 1)
+                    next_run = next_run + timedelta(days=1)
                 
                 sleep_seconds = (next_run - now).total_seconds()
                 self.logger.info(f"⏰ Next notification check scheduled for {next_run.strftime('%Y-%m-%d %H:%M')}")
@@ -128,6 +128,8 @@ class NotificationScheduler:
                 
             except Exception as e:
                 self.logger.error(f"❌ Не удалось отправить напоминание пользователю {status.user_id}: {e}")
+                # Continue with next user even if one fails
+                continue
     
     async def _send_admin_warnings(self):
         """Send overdue warnings to admins"""
@@ -187,6 +189,8 @@ class NotificationScheduler:
                 
             except Exception as e:
                 self.logger.error(f"❌ Не удалось отправить предупреждение администратору {admin_id}: {e}")
+                # Continue with next admin even if one fails
+                continue
     
     async def send_test_notifications(self):
         """Send test notifications (for debugging)"""

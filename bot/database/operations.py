@@ -627,9 +627,10 @@ class Database:
                          WHERE user_id = ug.user_id AND group_id = g.group_id 
                          ORDER BY payment_date DESC LIMIT 1),
                         g.next_payment_date
-                    ) = CURRENT_DATE + INTERVAL '%s day'
+                    ) = CURRENT_DATE + $1 * INTERVAL '1 day'
                     ORDER BY next_payment_date
-                    """ % days_before
+                    """,
+                    days_before
                 )
                 
                 result = []
@@ -686,9 +687,10 @@ class Database:
                          WHERE user_id = ug.user_id AND group_id = g.group_id 
                          ORDER BY payment_date DESC LIMIT 1),
                         g.next_payment_date
-                    ) = CURRENT_DATE - INTERVAL '%s day'
+                    ) = CURRENT_DATE - $1 * INTERVAL '1 day'
                     ORDER BY next_payment_date
-                    """ % days_after
+                    """,
+                    days_after
                 )
                 
                 result = []

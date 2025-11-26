@@ -76,12 +76,9 @@ usermod -aG docker root
 systemctl start docker
 systemctl enable docker
 
-# Install Docker Compose
-apt install -y docker-compose
-
-# Verify installation
+# Verify installation (Docker Compose is included)
 docker --version
-docker-compose --version
+docker compose version
 ```
 
 ### 3.3 Install Git
@@ -330,22 +327,22 @@ echo "0 3 * * * /opt/backup.sh" | crontab -
 
 ### 9.1 Using Docker Compose (Easier for updates)
 ```bash
-# Use docker-compose for easier management
+# Use docker compose for easier management
 cd /opt/spotify_family_automatization
 
-# Start with docker-compose
-docker-compose up -d
+# Start with docker compose
+docker compose up -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Stop
-docker-compose down
+docker compose down
 
 # Update and restart
 git pull origin main
-docker-compose build
-docker-compose up -d
+docker compose build
+docker compose up -d
 ```
 
 ### 9.2 Using Docker Hub (Advanced)
