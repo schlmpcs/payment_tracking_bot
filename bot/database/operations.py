@@ -863,7 +863,7 @@ class Database:
                     """
                     SELECT u.user_id, u.username, u.first_name, u.display_id,
                            COUNT(p.payment_id) as total_payments,
-                           MAX(p.created_at) as last_payment
+                           MAX(p.payment_date) as last_payment
                     FROM users u
                     JOIN user_groups ug ON u.user_id = ug.user_id
                     LEFT JOIN payments p ON u.user_id = p.user_id AND p.group_id = $1

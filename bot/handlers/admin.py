@@ -1197,14 +1197,17 @@ async def show_group_members(message: types.Message, state: FSMContext):
         return
     
     members_text = (
-        f"👥 **Участники группы {group.group_name}**\n"
+        f"👥 <b>Участники группы {group.group_name}</b>\n"
         f"🆔 ID группы: {group.display_id}\n\n"
     )
     
     for member in members:
         last_payment = "Никогда" if not member['last_payment'] else member['last_payment'].strftime('%Y-%m-%d')
+        username_display = f"@{member['username']}" if member['username'] else 'нет username'
+        first_name = member['first_name'] or 'N/A'
+        
         members_text += (
-            f"👤 **{member['first_name'] or 'N/A'}** (@{member['username'] or 'нет'})\n"
+            f"👤 <b>{first_name}</b> ({username_display})\n"
             f"🆔 ID: {member['display_id']} | Telegram ID: {member['user_id']}\n"
             f"💳 Платежей: {member['total_payments']} | Последний: {last_payment}\n\n"
         )
@@ -1212,7 +1215,7 @@ async def show_group_members(message: types.Message, state: FSMContext):
     members_text += f"Всего участников: {len(members)}\n\n"
     members_text += "Для удаления пользователя из группы введите его Telegram ID:"
     
-    await message.answer(members_text, parse_mode="Markdown")
+    await message.answer(members_text, parse_mode="HTML")
     await state.update_data(group=group)
     await state.set_state(AdminStates.removing_user_select_user)
 
