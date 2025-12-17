@@ -67,7 +67,7 @@ async def start_command(message: types.Message, state: FSMContext):
 
                 welcome_text = (
                     f"👋 С возвращением, {username}!\n\n"
-                    f"👥 Группа: **{status.group_name}**\n"
+                    f"👥 Группа: <b>{status.group_name}</b>\n"
                     f"{emoji} Следующий платёж: {format_date(status.next_payment_date)}\n"
                     f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
                     f"💡 Используйте /pay для загрузки чека об оплате\n"
@@ -84,8 +84,8 @@ async def start_command(message: types.Message, state: FSMContext):
             welcome_text = (
                 f"👋 Добро пожаловать, {username}!\n\n"
                 f"🔒 Вы ещё не зарегистрированы ни в одной группе для оплаты.\n\n"
-                f"🚪 **Присоединиться к группе:** Используйте /join для просмотра доступных групп\n"
-                f"❓ **Нужна помощь:** Используйте /help для просмотра всех команд\n\n"
+                f"🚪 <b>Присоединиться к группе:</b> Используйте /join для просмотра доступных групп\n"
+                f"❓ <b>Нужна помощь:</b> Используйте /help для просмотра всех команд\n\n"
                 f"После регистрации вы сможете:\n"
                 f"• 💳 Загружать чеки об оплате\n"
                 f"• 📊 Проверять статус платежей\n"
@@ -98,7 +98,7 @@ async def start_command(message: types.Message, state: FSMContext):
             f"Пожалуйста, попробуйте позже."
         )
 
-    await message.answer(welcome_text, parse_mode="Markdown")
+    await message.answer(welcome_text, parse_mode="HTML")
 
 
 @user_router.message(Command("help"))

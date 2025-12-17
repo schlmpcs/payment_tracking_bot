@@ -92,41 +92,78 @@ class NotificationScheduler:
             self.logger.error(f"❌ Error during notification checks: {e}")
 
     async def _send_user_reminders(self):
-        """Send payment reminders to users"""
+        """Send payment reminders to users (on due date and up to 2 days after)"""
         if not self.db or not self.db.pool:
             return
-
-        reminder_days = self.settings.bot_payment_reminder_days
-        users_needing_reminders = await self.db.get_users_needing_reminders(reminder_days)
-
+        
+        users_needing_reminders = await self.db.get_users_needing_reminders()
+        
         if not users_needing_reminders:
             self.logger.info("📭 Сегодня никому не нужны напоминания об оплате")
             return
-
+        
         self.logger.info(
             f"📬 Отправка напоминаний {len(users_needing_reminders)} пользователям")
-
+        
+        from datetime import date
+        today = get_now().date()
+        
         for status in users_needing_reminders:
             try:
-                reminder_text = (
-                    f"⏰ **Напоминание об оплате**\n\n"
-                    f"Ваш платёж за Spotify для группы **{status.group_name}** должен быть совершён через {reminder_days} дней.\n\n"
-                    f"📅 **Дата платежа:** {format_date(status.next_payment_date)}\n"
-                    f"💰 **Сумма:** €{self.settings.bot_default_payment_price}\n\n"
-                    f"💡 **Для оплаты:** Используйте команду /pay и загрузите чек\n"
-                    f"📊 **Проверить статус:** Используйте команду /status\n\n"
-                    f"⚠️ Пожалуйста, совершите платёж вовремя, чтобы сохранить доступ к Spotify!"
-                )
-
+                # Calculate days overdue
+                payment_date = status.next_payment_date
+                if isinstance(payment_date, datetime):
+                    payment_date = payment_date.date()
+                
+                days_overdue = (today - payment_date).days
+                
+                # Generate appropriate message based on days overdue
+                if days_overdue == 0:
+                    # Payment due TODAY
+                    reminder_text = (
+                        f"⏰ <b>НАПОМИНАНИЕ ОБ ОПЛАТЕ</b>\n\n"
+                        f"🔴 Ваш платёж за Spotify для группы <b>{status.group_name}</b> должен быть совершён <b>СЕГОДНЯ</b>!\n\n"
+                        f"📅 <b>Дата платежа:</b> {format_date(status.next_payment_date)}\n"
+                        f"💰 <b>Сумма:</b> €{self.settings.bot_default_payment_price}\n\n"
+                        f"💡 <b>Для оплаты:</b> Используйте команду /pay и загрузите чек\n"
+                        f"📊 <b>Проверить статус:</b> Используйте команду /status\n\n"
+                        f"⚠️ Пожалуйста, совершите платёж сегодня, чтобы сохранить доступ к Spotify!"
+                    )
+                elif days_overdue == 1:
+                    # 1 day overdue
+                    reminder_text = (
+                        f"⚠️ <b>ПЛАТЁЖ ПРОСРОЧЕН</b>\n\n"
+                        f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>1 день</b>.\n\n"
+                        f"📅 <b>Срок был:</b> {format_date(status.next_payment_date)}\n"
+                        f"💰 <b>Сумма:</b> €{self.settings.bot_default_payment_price}\n\n"
+                        f"💡 <b>Для оплаты:</b> Используйте команду /pay и загрузите чек\n"
+                        f"📊 <b>Проверить статус:</b> Используйте команду /status\n\n"
+                        f"🚨 Пожалуйста, оплатите как можно скорее, чтобы избежать отключения!"
+                    )
+                elif days_overdue == 2:
+                    # 2 days overdue - FINAL REMINDER
+                    reminder_text = (
+                        f"🚨 <b>ПОСЛЕДНЕЕ ПРЕДУПРЕЖДЕНИЕ</b>\n\n"
+                        f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>2 дня</b>!\n\n"
+                        f"📅 <b>Срок был:</b> {format_date(status.next_payment_date)}\n"
+                        f"💰 <b>Сумма:</b> €{self.settings.bot_default_payment_price}\n\n"
+                        f"💡 <b>Для оплаты:</b> Используйте команду /pay и загрузите чек\n\n"
+                        f"⛔ <b>ВНИМАНИЕ:</b> Если оплата не будет получена завтра, администратор будет уведомлён, "
+                        f"и вы можете быть удалены из группы!\n\n"
+                        f"🆘 Оплатите СРОЧНО!"
+                    )
+                else:
+                    # Skip if outside 0-2 range (shouldn't happen with query filter)
+                    continue
+                
                 await self.bot.send_message(
                     chat_id=status.user_id,
                     text=reminder_text,
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
-
+                
                 self.logger.info(
-                    f"📤 Напоминание отправлено пользователю {status.user_id} для группы '{status.group_name}'")
-
+                    f"📤 Напоминание (день {days_overdue}) отправлено пользователю {status.user_id} для группы '{status.group_name}'")
                 # Small delay between messages to avoid rate limits
                 await asyncio.sleep(0.5)
 

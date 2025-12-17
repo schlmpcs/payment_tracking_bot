@@ -627,7 +627,7 @@ class Database:
             return []
 
     async def get_users_needing_reminders(self, days_before: int = 3) -> List[PaymentStatus]:
-        """Get users who need payment reminders (X days before due date)"""
+        """Get users who need payment reminders (on due date and up to 2 days after)"""
         if not self.pool:
             return []
 
@@ -655,28 +655,38 @@ class Database:
                          WHERE user_id = ug.user_id AND group_id = g.group_id 
                          ORDER BY payment_date DESC LIMIT 1),
                         g.next_payment_date
-                    ) = CURRENT_DATE + $1 * INTERVAL '1 day'
+                    ) BETWEEN CURRENT_DATE - INTERVAL '2 days' AND CURRENT_DATE
                     ORDER BY next_payment_date
-                    """,
-                    days_before
+                    """
                 )
 
                 result = []
+                today = get_now().date()
+
                 for row in rows:
                     next_payment = row['next_payment_date']
-                    days_diff = (next_payment - get_now().date()).days
-                    months_remaining = max(0, days_diff // 30)
+                    # Convert datetime to date if needed
+                    if isinstance(next_payment, datetime):
+                        next_payment_date = next_payment.date()
+                    else:
+                        next_payment_date = next_payment
 
-                    result.append(PaymentStatus(
-                        user_id=row['user_id'],
-                        group_id=row['group_id'],
-                        group_name=row['group_name'],
-                        next_payment_date=next_payment,
-                        last_payment_date=row['last_payment_date'],
-                        months_remaining=months_remaining,
-                        is_overdue=False
-                    ))
+                    # Calculate days overdue (negative means due in future, 0 = today, positive = overdue)
+                    days_overdue = (today - next_payment_date).days
 
+                    # Only include users who are 0-2 days overdue
+                    if 0 <= days_overdue <= 2:
+                        months_remaining = 0  # Already due or overdue
+
+                        result.append(PaymentStatus(
+                            user_id=row['user_id'],
+                            group_id=row['group_id'],
+                            group_name=row['group_name'],
+                            next_payment_date=next_payment_date,
+                            last_payment_date=row['last_payment_date'],
+                            months_remaining=months_remaining,
+                            is_overdue=(days_overdue > 0)
+                        ))
                 return result
 
         except Exception as e:
