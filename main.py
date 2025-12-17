@@ -20,32 +20,36 @@ from bot.utils.notifications import NotificationScheduler
 
 async def main():
     """Main bot function"""
-    
+
     # Load configuration
     settings = Settings()
-    
+
     # Setup logging
+    import sys
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('bot.log'),
-            logging.StreamHandler()
+            logging.FileHandler('bot.log', encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
         ]
     )
+    # Force UTF-8 encoding for console output on Windows
+    if sys.platform == 'win32':
+        sys.stdout.reconfigure(encoding='utf-8')
     logger = logging.getLogger(__name__)
-    
+
     # Initialize bot and dispatcher
     bot = Bot(token=settings.tg_token.get_secret_value())
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
-    
+
     # Include routers
     dp.include_router(user_router)
     dp.include_router(admin_router)
-    
+
     logger.info("🤖 Starting Spotify Payment Bot...")
-    
+
     # Initialize database
     db = Database(settings)
     try:
@@ -56,15 +60,16 @@ async def main():
             else:
                 logger.warning("⚠️ Database table initialization failed")
         else:
-            logger.error("❌ Database connection failed - continuing without database")
+            logger.error(
+                "❌ Database connection failed - continuing without database")
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
         logger.info("🔄 Bot will continue without database functionality")
-    
+
     # Initialize handlers with database and settings
     init_user_handlers(db, settings)
     init_admin_handlers(db, settings)
-    
+
     # Initialize notification scheduler
     scheduler = None
     if db and db.pool:
@@ -72,8 +77,9 @@ async def main():
         await scheduler.start()
         logger.info("🔔 Payment notification system started")
     else:
-        logger.warning("⚠️ Notification system disabled - database not available")
-    
+        logger.warning(
+            "⚠️ Notification system disabled - database not available")
+
     try:
         logger.info("🚀 Starting bot polling...")
         await dp.start_polling(bot)

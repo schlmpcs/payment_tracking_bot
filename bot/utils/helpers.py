@@ -2,19 +2,41 @@
 Utility functions for the bot
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List
 import logging
+import pytz
+from bot.config.settings import Settings
+
+# Initialize settings
+settings = Settings()
+
+# Get timezone from settings
+TIMEZONE = pytz.timezone(settings.bot_timezone)
+
+
+def get_now() -> datetime:
+    """Get current datetime in configured timezone (as naive datetime)"""
+    # Get timezone-aware datetime, then convert to naive
+    # Database expects naive datetimes
+    return datetime.now(TIMEZONE).replace(tzinfo=None)
+
+
+def get_today() -> datetime:
+    """Get today's date (as datetime) in configured timezone"""
+    return get_now().replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def format_date(date: datetime) -> str:
-    """Format date for display"""
-    return date.strftime("%Y-%m-%d")
+    """Format date for display (dd.mm.yyyy)"""
+    if isinstance(date, datetime):
+        return date.strftime("%d.%m.%Y")
+    return date.strftime("%d.%m.%Y")
 
 
 def format_datetime(date: datetime) -> str:
-    """Format datetime for display"""
-    return date.strftime("%Y-%m-%d %H:%M")
+    """Format datetime for display (dd.mm.yyyy HH:MM)"""
+    return date.strftime("%d.%m.%Y %H:%M")
 
 
 def format_display_id(number: int) -> str:
@@ -45,16 +67,18 @@ def extract_group_display_id(group_name: str) -> str:
 def calculate_days_until(target_date) -> int:
     """Calculate days until target date"""
     from datetime import datetime, date
-    
+
     # Handle both datetime and date objects
     if isinstance(target_date, datetime):
         target_date = target_date.date()
     elif isinstance(target_date, date):
         pass  # Already a date object
     else:
-        raise TypeError(f"Expected datetime or date object, got {type(target_date)}")
-    
-    return (target_date - datetime.now().date()).days
+        raise TypeError(
+            f"Expected datetime or date object, got {type(target_date)}"
+        )
+
+    return (target_date - get_now().date()).days
 
 
 def get_payment_status_emoji(days_until: int) -> str:

@@ -14,11 +14,13 @@ class PaymentStates(StatesGroup):
 class JoinStates(StatesGroup):
     """Group joining states"""
     selecting_group = State()
+    confirming_group = State()
 
 
 class AdminStates(StatesGroup):
     """Admin operation states"""
     creating_group = State()
+    creating_group_date = State()
     adding_user_username = State()
     adding_user_group = State()
     deleting_group_select = State()
