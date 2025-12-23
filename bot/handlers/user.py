@@ -285,30 +285,18 @@ async def payment_history_command(message: types.Message):
             f"🏷️ Группа: {group.group_name}\n\n"
         )
 
-        total_months = 0
-        total_amount = 0
-
         for payment in payments[-10:]:  # Show last 10 payments
             payment_date = payment.created_at.strftime('%Y-%m-%d')
-            amount = payment.months_paid * settings.bot_default_payment_price
-            total_months += payment.months_paid
-            total_amount += amount
 
             history_text += (
                 f"💳 **{payment_date}**\n"
-                f"   📅 Месяцев: {payment.months_paid}\n"
-                f"   💰 Сумма: {amount:.2f}€\n\n"
+                f"   📅 Месяцев: {payment.months_paid}\n\n"
             )
 
         if len(payments) > 10:
             history_text += f"... и ещё {len(payments) - 10} платежей\n\n"
 
-        history_text += (
-            f"📈 **Итого:**\n"
-            f"💳 Всего платежей: {len(payments)}\n"
-            f"📅 Всего месяцев: {total_months}\n"
-            f"💰 Общая сумма: {total_amount:.2f}€"
-        )
+        history_text += f"📈 **Всего платежей:** {len(payments)}"
 
         await message.answer(history_text, parse_mode="Markdown")
 

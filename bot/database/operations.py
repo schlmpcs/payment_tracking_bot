@@ -637,8 +637,10 @@ class Database:
                     """
                     SELECT 
                         ug.user_id,
+                        u.display_id as user_display_id,
                         g.group_id,
                         g.group_name,
+                        g.display_id as group_display_id,
                         COALESCE(
                             (SELECT next_payment_date FROM payments 
                              WHERE user_id = ug.user_id AND group_id = g.group_id 
@@ -650,6 +652,7 @@ class Database:
                          ORDER BY payment_date DESC LIMIT 1) as last_payment_date
                     FROM user_groups ug
                     JOIN groups g ON ug.group_id = g.group_id
+                    JOIN users u ON ug.user_id = u.user_id
                     WHERE COALESCE(
                         (SELECT next_payment_date FROM payments 
                          WHERE user_id = ug.user_id AND group_id = g.group_id 
@@ -680,8 +683,10 @@ class Database:
 
                         result.append(PaymentStatus(
                             user_id=row['user_id'],
+                            user_display_id=row['user_display_id'],
                             group_id=row['group_id'],
                             group_name=row['group_name'],
+                            group_display_id=row['group_display_id'],
                             next_payment_date=next_payment_date,
                             last_payment_date=row['last_payment_date'],
                             months_remaining=months_remaining,
@@ -734,6 +739,8 @@ class Database:
                 result = []
                 for row in rows:
                     next_payment = row['next_payment_date']
+                    if isinstance(next_payment, datetime):
+                        next_payment = next_payment.date()
                     days_diff = (get_now().date() - next_payment).days
 
                     # Create extended PaymentStatus with user info for admin warnings
