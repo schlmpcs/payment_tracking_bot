@@ -83,12 +83,12 @@ def calculate_days_until(target_date) -> int:
 
 def add_months_to_date(base_date: datetime, months: int, payment_day: int) -> datetime:
     """Add months to a date and set to specific payment day
-    
+
     Args:
         base_date: Starting date
         months: Number of months to add
         payment_day: Day of month for payment (1-28)
-    
+
     Returns:
         New datetime with added months on the payment day
     """
@@ -96,7 +96,7 @@ def add_months_to_date(base_date: datetime, months: int, payment_day: int) -> da
     new_month = base_date.month + months
     new_year = base_date.year + (new_month - 1) // 12
     new_month = ((new_month - 1) % 12) + 1
-    
+
     # Set to payment day (guaranteed 1-28, safe for all months)
     return base_date.replace(year=new_year, month=new_month, day=payment_day)
 

@@ -42,7 +42,7 @@ class PaymentStatus(NamedTuple):
     user_display_id: str  # User's 3-digit display ID
     group_id: int
     group_name: str
-    group_display_id: str  # Group's 3-digit display ID 
+    group_display_id: str  # Group's 3-digit display ID
     next_payment_date: datetime
     last_payment_date: Optional[datetime]
     months_remaining: int
