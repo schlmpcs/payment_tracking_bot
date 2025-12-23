@@ -477,10 +477,32 @@ class Database:
 
         try:
             async with self.pool.acquire() as conn:
-                # Calculate next payment date
+                # Get the previous due date (not payment date)
+                previous_due_date = await conn.fetchval(
+                    """
+                    SELECT COALESCE(
+                        (SELECT next_payment_date FROM payments 
+                         WHERE user_id = $1 AND group_id = $2 
+                         ORDER BY payment_date DESC LIMIT 1),
+                        (SELECT next_payment_date FROM groups WHERE group_id = $2)
+                    )
+                    """,
+                    user_id, group_id
+                )
+                
+                # Calculate next payment date from the previous DUE date, not the actual payment date
+                # This ensures that late payments don't shift the payment schedule forward
                 current_payment_date = get_now()
-                next_payment_date = current_payment_date + \
-                    timedelta(days=30 * months_paid)
+                if previous_due_date:
+                    # Convert to datetime if it's a date object
+                    if isinstance(previous_due_date, datetime):
+                        base_date = previous_due_date
+                    else:
+                        base_date = datetime.combine(previous_due_date, datetime.min.time())
+                    next_payment_date = base_date + timedelta(days=30 * months_paid)
+                else:
+                    # Fallback if no previous due date exists (shouldn't happen)
+                    next_payment_date = current_payment_date + timedelta(days=30 * months_paid)
 
                 await conn.execute(
                     """
