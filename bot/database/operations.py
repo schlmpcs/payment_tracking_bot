@@ -1004,10 +1004,10 @@ class Database:
                 rows = await conn.fetch(
                     """
                     SELECT payment_id, user_id, group_id, months_paid, 
-                           receipt_file_id, created_at
+                           payment_date, next_payment_date, receipt_file_id
                     FROM payments 
                     WHERE user_id = $1 
-                    ORDER BY created_at DESC
+                    ORDER BY payment_date DESC
                     """,
                     user_id
                 )
@@ -1019,8 +1019,9 @@ class Database:
                         user_id=row['user_id'],
                         group_id=row['group_id'],
                         months_paid=row['months_paid'],
-                        receipt_file_id=row['receipt_file_id'],
-                        created_at=row['created_at']
+                        payment_date=row['payment_date'],
+                        next_payment_date=row['next_payment_date'],
+                        receipt_file_id=row['receipt_file_id']
                     ))
 
                 return payments

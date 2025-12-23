@@ -286,7 +286,7 @@ async def payment_history_command(message: types.Message):
         )
 
         for payment in payments[-10:]:  # Show last 10 payments
-            payment_date = payment.created_at.strftime('%Y-%m-%d')
+            payment_date = payment.payment_date.strftime('%Y-%m-%d')
 
             history_text += (
                 f"💳 **{payment_date}**\n"
