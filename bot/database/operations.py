@@ -240,6 +240,37 @@ class Database:
                     )
 
                 self.logger.info("✅ Groups migration completed")
+            
+            # Migrate payment_day_of_month column
+            groups_has_payment_day = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'groups' AND column_name = 'payment_day_of_month'
+                )
+            """)
+            
+            if not groups_has_payment_day:
+                self.logger.info("🔄 Adding payment_day_of_month column to groups table...")
+                await conn.execute("ALTER TABLE groups ADD COLUMN payment_day_of_month INTEGER")
+                
+                # Populate from existing next_payment_date
+                existing_groups = await conn.fetch("SELECT group_id, next_payment_date FROM groups")
+                for group in existing_groups:
+                    payment_day = group['next_payment_date'].day
+                    # Ensure it's between 1-28
+                    if payment_day > 28:
+                        payment_day = 28
+                        self.logger.warning(f"Group {group['group_id']} had payment day {group['next_payment_date'].day}, clamped to 28")
+                    
+                    await conn.execute(
+                        "UPDATE groups SET payment_day_of_month = $1 WHERE group_id = $2",
+                        payment_day, group['group_id']
+                    )
+                
+                # Add constraints
+                await conn.execute("ALTER TABLE groups ADD CONSTRAINT groups_payment_day_check CHECK (payment_day_of_month BETWEEN 1 AND 28)")
+                await conn.execute("ALTER TABLE groups ALTER COLUMN payment_day_of_month SET NOT NULL")
+                self.logger.info("✅ payment_day_of_month migration completed")
 
         except Exception as e:
             self.logger.error(f"❌ Migration failed: {e}")
@@ -310,17 +341,24 @@ class Database:
                 # Get next display ID and format group name
                 display_id = await self._get_next_group_display_id()
                 formatted_group_name = format_group_name(display_id)
+                
+                # Extract payment day (ensure 1-28)
+                payment_day = next_payment_date.day
+                if payment_day > 28:
+                    self.logger.warning(f"Payment day {payment_day} exceeds 28, clamping to 28")
+                    payment_day = 28
+                    next_payment_date = next_payment_date.replace(day=28)
 
                 group_id = await conn.fetchval(
                     """
-                    INSERT INTO groups (group_name, display_id, next_payment_date) 
-                    VALUES ($1, $2, $3) 
+                    INSERT INTO groups (group_name, display_id, payment_day_of_month, next_payment_date) 
+                    VALUES ($1, $2, $3, $4) 
                     RETURNING group_id
                     """,
-                    formatted_group_name, display_id, next_payment_date
+                    formatted_group_name, display_id, payment_day, next_payment_date
                 )
                 self.logger.info(
-                    f"Created group '{formatted_group_name}' with ID {group_id}, Display: {display_id}")
+                    f"Created group '{formatted_group_name}' with ID {group_id}, Display: {display_id}, Payment day: {payment_day}")
                 return group_id
         except Exception as e:
             self.logger.error(f"Failed to create group '{group_name}': {e}")
@@ -334,7 +372,7 @@ class Database:
         try:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT group_id, group_name, display_id, next_payment_date, created_at FROM groups ORDER BY display_id"
+                    "SELECT group_id, group_name, display_id, payment_day_of_month, next_payment_date, created_at FROM groups ORDER BY display_id"
                 )
                 return [Group(*row) for row in rows]
         except Exception as e:
@@ -349,7 +387,7 @@ class Database:
         try:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT group_id, group_name, display_id, next_payment_date, created_at FROM groups WHERE group_name = $1",
+                    "SELECT group_id, group_name, display_id, payment_day_of_month, next_payment_date, created_at FROM groups WHERE group_name = $1",
                     group_name
                 )
                 return Group(*row) if row else None
@@ -402,12 +440,13 @@ class Database:
                         g.group_id,
                         g.group_name,
                         g.display_id,
+                        g.payment_day_of_month,
                         g.next_payment_date,
                         g.created_at,
                         COUNT(ug.user_id) as member_count
                     FROM groups g
                     LEFT JOIN user_groups ug ON g.group_id = ug.group_id
-                    GROUP BY g.group_id, g.group_name, g.display_id, g.next_payment_date, g.created_at
+                    GROUP BY g.group_id, g.group_name, g.display_id, g.payment_day_of_month, g.next_payment_date, g.created_at
                     ORDER BY g.display_id
                 """)
 
@@ -416,6 +455,7 @@ class Database:
                         'group_id': row['group_id'],
                         'group_name': row['group_name'],
                         'display_id': row['display_id'],
+                        'payment_day_of_month': row['payment_day_of_month'],
                         'next_payment_date': row['next_payment_date'],
                         'created_at': row['created_at'],
                         'member_count': row['member_count']
@@ -457,7 +497,7 @@ class Database:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
-                    SELECT g.group_id, g.group_name, g.display_id, g.next_payment_date, g.created_at
+                    SELECT g.group_id, g.group_name, g.display_id, g.payment_day_of_month, g.next_payment_date, g.created_at
                     FROM groups g
                     JOIN user_groups ug ON g.group_id = ug.group_id
                     WHERE ug.user_id = $1
@@ -477,29 +517,36 @@ class Database:
 
         try:
             async with self.pool.acquire() as conn:
-                # Get the previous due date (not payment date)
-                previous_due_date = await conn.fetchval(
+                # Get the previous due date and payment day
+                row = await conn.fetchrow(
                     """
-                    SELECT COALESCE(
-                        (SELECT next_payment_date FROM payments 
-                         WHERE user_id = $1 AND group_id = $2 
-                         ORDER BY payment_date DESC LIMIT 1),
-                        (SELECT next_payment_date FROM groups WHERE group_id = $2)
-                    )
+                    SELECT 
+                        COALESCE(
+                            (SELECT next_payment_date FROM payments 
+                             WHERE user_id = $1 AND group_id = $2 
+                             ORDER BY payment_date DESC LIMIT 1),
+                            (SELECT next_payment_date FROM groups WHERE group_id = $2)
+                        ) as previous_due_date,
+                        (SELECT payment_day_of_month FROM groups WHERE group_id = $2) as payment_day
                     """,
                     user_id, group_id
                 )
-                
-                # Calculate next payment date from the previous DUE date, not the actual payment date
-                # This ensures that late payments don't shift the payment schedule forward
+
+                # Calculate next payment date using month arithmetic
+                # This keeps payments on the same day each month
+                from bot.utils.helpers import add_months_to_date
                 current_payment_date = get_now()
-                if previous_due_date:
-                    # Convert to datetime if it's a date object
-                    if isinstance(previous_due_date, datetime):
-                        base_date = previous_due_date
-                    else:
-                        base_date = datetime.combine(previous_due_date, datetime.min.time())
-                    next_payment_date = base_date + timedelta(days=30 * months_paid)
+                
+                if row and row['previous_due_date']:
+                    previous_due_date = row['previous_due_date']
+                    payment_day = row['payment_day']
+                    
+                    # Convert to datetime if needed
+                    if not isinstance(previous_due_date, datetime):
+                        previous_due_date = datetime.combine(previous_due_date, datetime.min.time())
+                    
+                    # Add months and set to payment day
+                    next_payment_date = add_months_to_date(previous_due_date, months_paid, payment_day)
                 else:
                     # Fallback if no previous due date exists (shouldn't happen)
                     next_payment_date = current_payment_date + timedelta(days=30 * months_paid)

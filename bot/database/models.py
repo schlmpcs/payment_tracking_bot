@@ -20,6 +20,7 @@ class Group(NamedTuple):
     group_id: int
     group_name: str
     display_id: str  # 3-digit display ID like "001"
+    payment_day_of_month: int  # Day of month for payments (1-28)
     next_payment_date: datetime
     created_at: Optional[datetime] = None
 
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS groups (
     group_id SERIAL PRIMARY KEY,
     group_name VARCHAR(100) UNIQUE NOT NULL,
     display_id VARCHAR(3) UNIQUE NOT NULL,
+    payment_day_of_month INTEGER NOT NULL CHECK (payment_day_of_month BETWEEN 1 AND 28),
     next_payment_date TIMESTAMP NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
