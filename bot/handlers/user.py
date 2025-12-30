@@ -12,7 +12,7 @@ from aiogram.enums import ChatType
 from bot.database.operations import Database
 from bot.config.settings import Settings
 from bot.utils.states import PaymentStates, JoinStates
-from bot.utils.keyboards import get_months_keyboard
+from bot.utils.keyboards import get_months_keyboard, get_user_main_menu
 from bot.utils.helpers import (
     format_date, calculate_days_until,
     get_payment_status_emoji, get_payment_status_text,
@@ -70,10 +70,10 @@ async def start_command(message: types.Message, state: FSMContext):
                     f"👥 Группа: <b>{status.group_name}</b>\n"
                     f"{emoji} Следующий платёж: {format_date(status.next_payment_date)}\n"
                     f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
-                    f"💡 Используйте /pay для загрузки чека об оплате\n"
-                    f"📋 Используйте /status для подробной информации о платежах\n"
-                    f"❓ Используйте /help для просмотра всех команд"
+                    f"Выберите действие:"
                 )
+                await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_user_main_menu())
+                return
             else:
                 welcome_text = (
                     f"👋 Добро пожаловать, {username}!\n\n"
@@ -98,7 +98,140 @@ async def start_command(message: types.Message, state: FSMContext):
             f"Пожалуйста, попробуйте позже."
         )
 
-    await message.answer(welcome_text, parse_mode="HTML")
+    await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_user_main_menu())
+
+
+# Callback handlers for user menu buttons
+@user_router.callback_query(F.data == "user_pay")
+async def handle_user_pay(callback: types.CallbackQuery, state: FSMContext):
+    """Handle Pay button from menu"""
+    if not db or not db.pool:
+        await callback.message.answer(
+            "❌ База данных в настоящее время недоступна.\n"
+            "Пожалуйста, попробуйте позже."
+        )
+        await callback.answer()
+        return
+
+    user_id = callback.from_user.id
+
+    # Check if user is registered
+    if not await db.is_user_registered(user_id):
+        await callback.message.answer(
+            "❌ Вы ещё не зарегистрированы ни в одной группе оплаты.\n"
+            "Пожалуйста, обратитесь к администратору для добавления в группу.",
+            reply_markup=get_user_main_menu()
+        )
+        await callback.answer()
+        return
+
+    # Get user's current status
+    status = await db.get_user_payment_status(user_id)
+    if not status:
+        await callback.message.answer(
+            "❌ Не удается получить информацию о ваших платежах.\n"
+            "Пожалуйста, обратитесь к администратору.",
+            reply_markup=get_user_main_menu()
+        )
+        await callback.answer()
+        return
+
+    # Ask user to select months
+    await callback.message.answer(
+        f"💳 **Оплата подписки**\n\n"
+        f"👥 Группа: {status.group_name}\n"
+        f"📅 Следующий платёж: {format_date(status.next_payment_date)}\n\n"
+        f"Выберите количество месяцев для оплаты:",
+        reply_markup=get_months_keyboard(),
+        parse_mode="Markdown"
+    )
+
+    await state.set_state(PaymentStates.selecting_months)
+    await callback.answer()
+
+
+@user_router.callback_query(F.data == "user_status")
+async def handle_user_status(callback: types.CallbackQuery):
+    """Handle Status button from menu"""
+    if not db or not db.pool:
+        await callback.message.answer(
+            "❌ База данных в настоящее время недоступна.\n"
+            "Пожалуйста, попробуйте позже."
+        )
+        await callback.answer()
+        return
+
+    user_id = callback.from_user.id
+
+    # Check if user is registered
+    if not await db.is_user_registered(user_id):
+        await callback.message.answer(
+            "❌ Вы ещё не зарегистрированы ни в одной группе оплаты.\n"
+            "Пожалуйста, обратитесь к администратору для добавления в группу.",
+            reply_markup=get_user_main_menu()
+        )
+        await callback.answer()
+        return
+
+    # Get payment status
+    status = await db.get_user_payment_status(user_id)
+    if not status:
+        await callback.message.answer(
+            "❌ Не удается получить информацию о ваших платежах.\n"
+            "Пожалуйста, обратитесь к администратору.",
+            reply_markup=get_user_main_menu()
+        )
+        await callback.answer()
+        return
+
+    days_until = calculate_days_until(status.next_payment_date)
+    emoji = get_payment_status_emoji(days_until)
+    status_text = get_payment_status_text(days_until)
+
+    response = (
+        f"{emoji} **Статус платежей**\n\n"
+        f"👥 Группа: {status.group_name}\n"
+        f"📅 Следующий платёж до: {format_date(status.next_payment_date)}\n"
+        f"📊 Статус: {status_text}\n"
+    )
+
+    if status.last_payment_date:
+        response += f"💰 Последний платёж: {format_date(status.last_payment_date)}\n"
+
+    if days_until <= 3:
+        response += f"\n💡 Используйте /pay для совершения платежа"
+
+    await callback.message.answer(response, parse_mode="Markdown", reply_markup=get_user_main_menu())
+    await callback.answer()
+
+
+@user_router.callback_query(F.data == "user_help")
+async def handle_user_help(callback: types.CallbackQuery):
+    """Handle Help button from menu"""
+    help_text = (
+        "🤖 **Справка по боту Spotify Payment**\n\n"
+        "**Доступные команды:**\n"
+        "🏠 /start - Приветственное сообщение и обзор статуса\n"
+        "🆔 /id - Показать ваш ID для администратора\n"
+        "🚪 /join - Присоединиться к группе оплаты\n"
+        "💳 /pay - Загрузить чек об оплате\n"
+        "📊 /status - Проверить статус ваших платежей\n"
+        "📈 /history - Показать историю платежей\n"
+        "❓ /help - Показать эту справку\n\n"
+        "**Как оплатить:**\n"
+        "1. Используйте команду /pay\n"
+        "2. Выберите количество месяцев для оплаты (1-6)\n"
+        "3. Загрузите чек банковского перевода\n"
+        "4. Платёж будет обработан автоматически\n\n"
+        "**Поддерживаемые форматы чеков:**\n"
+        "• 📷 Фотографии (JPG, PNG)\n"
+        "• 📄 PDF документы\n\n"
+        "**Нужна помощь?** Обратитесь к администратору, если у вас есть проблемы.\n\n"
+        "💡 Используйте /start для возврата в главное меню"
+    )
+
+    await callback.message.answer(help_text, parse_mode="Markdown", reply_markup=get_user_main_menu())
+    await callback.answer()
 
 
 @user_router.message(Command("help"))
@@ -125,10 +258,11 @@ async def help_command(message: types.Message):
         "**Поддерживаемые форматы чеков:**\n"
         "• 📷 Фотографии (JPG, PNG)\n"
         "• 📄 PDF документы\n\n"
-        "**Нужна помощь?** Обратитесь к администратору, если у вас есть проблемы."
+        "**Нужна помощь?** Обратитесь к администратору, если у вас есть проблемы.\n\n"
+        "💡 Используйте /start для возврата в главное меню"
     )
 
-    await message.answer(help_text, parse_mode="Markdown")
+    await message.answer(help_text, parse_mode="Markdown", reply_markup=get_user_main_menu())
 
 
 @user_router.message(Command("id"))
@@ -392,7 +526,8 @@ async def status_command(message: types.Message):
     if not await db.is_user_registered(user_id):
         await message.answer(
             "❌ Вы ещё не зарегистрированы ни в одной группе оплаты.\n"
-            "Пожалуйста, обратитесь к администратору для добавления в группу."
+            "Пожалуйста, обратитесь к администратору для добавления в группу.",
+            reply_markup=get_user_main_menu()
         )
         return
 
@@ -422,7 +557,7 @@ async def status_command(message: types.Message):
     if days_until <= 3:
         response += f"\n💡 Используйте /pay для совершения платежа"
 
-    await message.answer(response, parse_mode="Markdown")
+    await message.answer(response, parse_mode="Markdown", reply_markup=get_user_main_menu())
 
 
 @user_router.message(Command("pay"))
@@ -444,7 +579,8 @@ async def pay_command(message: types.Message, state: FSMContext):
     if not await db.is_user_registered(user_id):
         await message.answer(
             "❌ Вы ещё не зарегистрированы ни в одной группе оплаты.\n"
-            "Пожалуйста, обратитесь к администратору для добавления в группу."
+            "Пожалуйста, обратитесь к администратору для добавления в группу.",
+            reply_markup=get_user_main_menu()
         )
         return
 
@@ -607,7 +743,8 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
                 f"👥 Группа: {group.group_name}\n\n"
                 f"Спасибо за ваш платёж! 🎉\n"
                 f"Ваша подписка была продлена.",
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=get_user_main_menu()
             )
 
             logger.info(

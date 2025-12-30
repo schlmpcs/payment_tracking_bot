@@ -48,7 +48,7 @@ def get_admin_main_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats"),
         InlineKeyboardButton(text="🔔 Тест уведомлений", callback_data="admin_test_notifications")
     )
-    
+
     return builder.as_markup()
 
 
@@ -59,6 +59,21 @@ def get_confirmation_keyboard(action: str) -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="✅ Да", callback_data=f"confirm_{action}"),
         InlineKeyboardButton(text="❌ Нет", callback_data=f"cancel_{action}")
+    )
+    
+    return builder.as_markup()
+
+
+def get_user_main_menu() -> InlineKeyboardMarkup:
+    """Create user main menu keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="💳 Оплатить", callback_data="user_pay"),
+        InlineKeyboardButton(text="📊 Статус", callback_data="user_status")
+    )
+    builder.row(
+        InlineKeyboardButton(text="❓ Помощь", callback_data="user_help")
     )
     
     return builder.as_markup()
