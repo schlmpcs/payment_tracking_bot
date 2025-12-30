@@ -167,6 +167,50 @@ async def test_notifications_command(message: types.Message):
         )
 
 
+@admin_router.message(Command("test_admin_notification"))
+async def test_admin_notification_command(message: types.Message):
+    """Handle /test_admin_notification command - instantly trigger admin warnings"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+
+    await message.answer("🧪 Запуск теста уведомлений администраторов...")
+
+    try:
+        # Import here to avoid circular imports
+        from bot.utils.notifications import NotificationScheduler
+
+        # Create a temporary scheduler for testing
+        test_scheduler = NotificationScheduler(message.bot, db, settings)
+
+        # Run only the admin warning check
+        await test_scheduler._send_admin_warnings()
+
+        await message.answer(
+            "✅ **Тест уведомлений администраторов завершен!**\n\n"
+            "Если есть пользователи, просроченные на 3+ дня, вы должны были получить уведомление.\n\n"
+            "💡 **Напоминание:** Уведомления администраторов отправляются автоматически ежедневно в 9:00 утра.",
+            parse_mode="Markdown"
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Test admin notification failed: {e}")
+        await message.answer(
+            f"❌ **Тест не удался:**\n\n"
+            f"`{str(e)}`\n\n"
+            f"Проверьте логи бота для получения дополнительной информации.",
+            parse_mode="Markdown"
+        )
+
+
 @admin_router.message(Command("update_due_date"))
 async def update_due_date_command(message: types.Message, state: FSMContext):
     """Handle /update_due_date command"""

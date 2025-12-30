@@ -200,22 +200,23 @@ class NotificationScheduler:
         # Send warning to each admin
         for admin_id in self.settings.tg_admin_ids:
             try:
-                warning_text = f"🚨 **ПРЕДУПРЕЖДЕНИЕ О ПРОСРОЧЕННОЙ ОПЛАТЕ**\n\n"
-                warning_text += f"Следующие пользователи просрочили платежи на {warning_days} дней:\n\n"
+                warning_text = "🚨 <b>ПРЕДУПРЕЖДЕНИЕ О ПРОСРОЧЕННОЙ ОПЛАТЕ</b>\n\n"
+                warning_text += f"Следующие пользователи просрочили платежи на {warning_days}+ дней:\n\n"
 
                 for group_name, users in groups_with_overdue.items():
-                    warning_text += f"**📂 {group_name}:**\n"
+                    warning_text += f"<b>📂 {group_name}:</b>\n"
                     for status in users:
-                        user_display = getattr(status, 'first_name', 'Unknown')
-                        if hasattr(status, 'username') and status.username:
+                        first_name = status.first_name or 'Unknown'
+                        user_display = first_name
+                        if status.username:
                             user_display += f" (@{status.username})"
                         user_display += f" (ID: {status.user_id})"
 
                         warning_text += f"• {user_display}\n"
                         warning_text += f"  📅 Срок был: {format_date(status.next_payment_date)}\n"
-                        warning_text += f"  ⏱️ Просрочено: {getattr(status, 'days_overdue', warning_days)} дней\n\n"
+                        warning_text += f"  ⏱️ Просрочено: {status.days_overdue} дней\n\n"
 
-                warning_text += "💡 **Действия, которые вы можете предпринять:**\n"
+                warning_text += "💡 <b>Действия, которые вы можете предпринять:</b>\n"
                 warning_text += "• Связаться с этими пользователями напрямую\n"
                 warning_text += "• Удалить их из группы при необходимости\n"
                 warning_text += "• Проверить статус платежей через /admin\n"
@@ -223,7 +224,7 @@ class NotificationScheduler:
                 await self.bot.send_message(
                     chat_id=admin_id,
                     text=warning_text,
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
 
                 self.logger.info(

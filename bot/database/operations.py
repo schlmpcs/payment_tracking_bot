@@ -650,8 +650,10 @@ class Database:
                     """
                     SELECT 
                         ug.user_id,
+                        u.display_id as user_display_id,
                         g.group_id,
                         g.group_name,
+                        g.display_id as group_display_id,
                         COALESCE(
                             (SELECT next_payment_date FROM payments 
                              WHERE user_id = ug.user_id AND group_id = g.group_id 
@@ -663,6 +665,7 @@ class Database:
                          ORDER BY payment_date DESC LIMIT 1) as last_payment_date
                     FROM user_groups ug
                     JOIN groups g ON ug.group_id = g.group_id
+                    JOIN users u ON ug.user_id = u.user_id
                     WHERE COALESCE(
                         (SELECT next_payment_date FROM payments 
                          WHERE user_id = ug.user_id AND group_id = g.group_id 
@@ -687,8 +690,10 @@ class Database:
 
                     result.append(PaymentStatus(
                         user_id=row['user_id'],
+                        user_display_id=row['user_display_id'],
                         group_id=row['group_id'],
                         group_name=row['group_name'],
+                        group_display_id=row['group_display_id'],
                         next_payment_date=next_payment_date,
                         last_payment_date=row['last_payment_date'],
                         months_remaining=months_remaining,
@@ -786,8 +791,10 @@ class Database:
                         ug.user_id,
                         u.username,
                         u.first_name,
+                        u.display_id as user_display_id,
                         g.group_id,
                         g.group_name,
+                        g.display_id as group_display_id,
                         COALESCE(
                             (SELECT next_payment_date FROM payments 
                              WHERE user_id = ug.user_id AND group_id = g.group_id 
@@ -805,7 +812,7 @@ class Database:
                          WHERE user_id = ug.user_id AND group_id = g.group_id 
                          ORDER BY payment_date DESC LIMIT 1),
                         g.next_payment_date
-                    ) = CURRENT_DATE - $1 * INTERVAL '1 day'
+                    ) <= CURRENT_DATE - $1 * INTERVAL '1 day'
                     ORDER BY next_payment_date
                     """,
                     days_after
@@ -818,20 +825,21 @@ class Database:
                         next_payment = next_payment.date()
                     days_diff = (get_now().date() - next_payment).days
 
-                    # Create extended PaymentStatus with user info for admin warnings
+                    # Create PaymentStatus with user info for admin warnings
                     status = PaymentStatus(
                         user_id=row['user_id'],
+                        user_display_id=row['user_display_id'],
                         group_id=row['group_id'],
                         group_name=row['group_name'],
+                        group_display_id=row['group_display_id'],
                         next_payment_date=next_payment,
                         last_payment_date=row['last_payment_date'],
                         months_remaining=0,
-                        is_overdue=True
+                        is_overdue=True,
+                        username=row['username'],
+                        first_name=row['first_name'],
+                        days_overdue=days_diff
                     )
-                    # Add user info as attributes
-                    status.username = row['username']
-                    status.first_name = row['first_name']
-                    status.days_overdue = days_diff
 
                     result.append(status)
 
@@ -868,22 +876,14 @@ class Database:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
-                    SELECT group_id, group_name, next_payment_date, created_at, display_id
+                    SELECT group_id, group_name, display_id, payment_day_of_month, next_payment_date, created_at
                     FROM groups 
                     WHERE display_id = $1
                     """,
                     display_id
                 )
 
-                if row:
-                    return Group(
-                        group_id=row['group_id'],
-                        group_name=row['group_name'],
-                        next_payment_date=row['next_payment_date'],
-                        created_at=row['created_at'],
-                        display_id=row['display_id']
-                    )
-                return None
+                return Group(*row) if row else None
 
         except Exception as e:
             self.logger.error(
