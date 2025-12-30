@@ -45,16 +45,16 @@ class NotificationScheduler:
         self.logger.info("🔕 Notification scheduler stopped")
 
     async def _scheduler_loop(self):
-        """Main scheduler loop - runs daily at 9:00 AM"""
+        """Main scheduler loop - runs daily at 12:00 PM"""
         while self.is_running:
             try:
-                # Calculate time until next 9:00 AM
+                # Calculate time until next 12:00 PM
                 now = get_now()
                 next_run = now.replace(
-                    hour=9, minute=0, second=0, microsecond=0)
+                    hour=12, minute=0, second=0, microsecond=0)
 
-                # If it's already past 9 AM today, schedule for tomorrow
-                if now.time() >= time(9, 0):
+                # If it's already past 12 PM today, schedule for tomorrow
+                if now.time() >= time(12, 0):
                     next_run = next_run + timedelta(days=1)
 
                 sleep_seconds = (next_run - now).total_seconds()
@@ -95,28 +95,28 @@ class NotificationScheduler:
         """Send payment reminders to users (on due date and up to 2 days after)"""
         if not self.db or not self.db.pool:
             return
-        
+
         users_needing_reminders = await self.db.get_users_needing_reminders()
-        
+
         if not users_needing_reminders:
             self.logger.info("📭 Сегодня никому не нужны напоминания об оплате")
             return
-        
+
         self.logger.info(
             f"📬 Отправка напоминаний {len(users_needing_reminders)} пользователям")
-        
+
         from datetime import date
         today = get_now().date()
-        
+
         for status in users_needing_reminders:
             try:
                 # Calculate days overdue
                 payment_date = status.next_payment_date
                 if isinstance(payment_date, datetime):
                     payment_date = payment_date.date()
-                
+
                 days_overdue = (today - payment_date).days
-                
+
                 # Generate appropriate message based on days overdue
                 if days_overdue == 0:
                     # Payment due TODAY
@@ -155,13 +155,13 @@ class NotificationScheduler:
                 else:
                     # Skip if outside 0-2 range (shouldn't happen with query filter)
                     continue
-                
+
                 await self.bot.send_message(
                     chat_id=status.user_id,
                     text=reminder_text,
                     parse_mode="HTML"
                 )
-                
+
                 self.logger.info(
                     f"📤 Напоминание (день {days_overdue}) отправлено пользователю {status.user_id} для группы '{status.group_name}'")
                 # Small delay between messages to avoid rate limits
