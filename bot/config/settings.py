@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Bot settings
     bot_default_payment_price: float = Field(
-        5.99, description="Default monthly payment amount"
+        700, description="Default monthly payment amount"
     )
     bot_max_months_payment: int = Field(
         6, description="Maximum months that can be paid at once"
@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     bot_timezone: str = Field(
         "UTC",
         description="Timezone for date/time operations (e.g., 'Asia/Almaty')"
+    )
+    bot_payment_link: str = Field(
+        "https://pay.kaspi.kz/pay/besmk1m9",
+        description="Payment link for Kaspi Bank or other payment system"
     )
 
     @property

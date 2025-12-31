@@ -15,7 +15,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.database.operations import Database
 from bot.config.settings import Settings
 from bot.utils.states import AdminStates
-from bot.utils.keyboards import get_admin_main_keyboard, get_confirmation_keyboard
+from bot.utils.keyboards import get_admin_main_keyboard, get_confirmation_keyboard, get_pagination_keyboard
 from bot.utils.helpers import (
     format_date, calculate_days_until,
     get_payment_status_emoji, get_payment_status_text,
@@ -257,7 +257,19 @@ async def update_due_date_command(message: types.Message, state: FSMContext):
 
 @admin_router.callback_query(F.data == "admin_view_groups")
 async def view_groups(callback: types.CallbackQuery):
-    """View all payment groups with members"""
+    """View all payment groups with fill status summary - page 0"""
+    await view_groups_page(callback, page=0)
+
+
+@admin_router.callback_query(F.data.startswith("view_groups_page_"))
+async def view_groups_page_handler(callback: types.CallbackQuery):
+    """Handle pagination for view groups"""
+    page = int(callback.data.split("_")[-1])
+    await view_groups_page(callback, page)
+
+
+async def view_groups_page(callback: types.CallbackQuery, page: int = 0):
+    """View all payment groups with fill status summary"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
         await callback.answer("Доступ запрещён", show_alert=True)
@@ -269,76 +281,47 @@ async def view_groups(callback: types.CallbackQuery):
         await callback.message.edit_text("📭 Группы оплаты не найдены.")
         return
 
-    response = "👥 <b>Все группы оплаты с участниками:</b>\n\n"
+    # Pagination settings
+    GROUPS_PER_PAGE = 5
+    total_groups = len(groups)
+    total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
+    
+    # Validate page number
+    if page < 0 or page >= total_pages:
+        page = 0
+    
+    # Get groups for current page
+    start_idx = page * GROUPS_PER_PAGE
+    end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
+    page_groups = groups[start_idx:end_idx]
 
-    for group in groups:
+    response = f"👥 <b>Все группы оплаты с участниками (стр. {page + 1}/{total_pages}):</b>\n\n"
+
+    for group in page_groups:
         days_until = calculate_days_until(group.next_payment_date)
         emoji = get_payment_status_emoji(days_until)
 
         # Get members for this group
         members = await db.get_group_members(group.group_id)
+        total_members = len(members) if members else 0
+
+        # Count members who have paid (not overdue)
+        paid_count = 0
+        if members:
+            for member in members:
+                if not member['is_overdue']:
+                    paid_count += 1
 
         response += (
             f"{emoji} <b>Группа: {group.group_name}</b> (ID: {group.display_id})\n"
             f"📅 Следующий платёж: {format_date(group.next_payment_date)}\n"
+            f"👥 {paid_count}/{total_members}\n\n"
         )
 
-        if members:
-            response += f"👥 <b>Участники ({len(members)}):</b>\n"
-            for idx, member in enumerate(members, 1):
-                first_name = member['first_name'] or 'N/A'
-                username_display = f"@{member['username']}" if member['username'] else 'нет username'
-
-                # Determine payment status
-                if member['is_overdue']:
-                    status = "❌ Просрочено"
-                else:
-                    member_days = (
-                        member['next_payment_date'] - get_now().date()).days
-                    if member_days <= 3:
-                        status = "⚠️ Скоро срок"
-                    else:
-                        status = "✅ Оплачено"
-
-                response += (
-                    f"   {idx}. {first_name} - {username_display} - {status}\n"
-                )
-        else:
-            response += "👥 <i>Участников нет</i>\n"
-
-        response += "\n"
-
-    await callback.message.edit_text(response, parse_mode="HTML")
-    await callback.answer()
-
-
-@admin_router.callback_query(F.data == "admin_overdue_users")
-async def view_overdue_users(callback: types.CallbackQuery):
-    """View users with overdue payments"""
-    user_id = callback.from_user.id
-    if not is_admin(user_id, settings.tg_admin_ids):
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
-
-    overdue_users = await db.get_overdue_users()
-
-    if not overdue_users:
-        await callback.message.edit_text("✅ Просроченных платежей не найдено!")
-        return
-
-    response = "❌ **Просроченные платежи:**\n\n"
-
-    for status in overdue_users:
-        days_overdue = abs(calculate_days_until(status.next_payment_date))
-
-        response += (
-            f"👤 ID пользователя: {status.user_id}\n"
-            f"👥 Группа: {status.group_name}\n"
-            f"📅 Дата платежа: {format_date(status.next_payment_date)}\n"
-            f"⏰ Просрочено: {days_overdue} дней\n\n"
-        )
-
-    await callback.message.edit_text(response, parse_mode="Markdown")
+    # Add pagination keyboard
+    keyboard = get_pagination_keyboard(page, total_pages, "view_groups", show_back=True)
+    
+    await callback.message.edit_text(response, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
 
 
@@ -444,9 +427,9 @@ async def create_group_with_date(message: types.Message, state: FSMContext):
             next_payment_date = datetime.strptime(date_input, "%d.%m.%Y")
 
             # Check if date is not in the past
-            if next_payment_date.date() < get_now().date():
+            if next_payment_date.date() <= get_now().date():
                 await message.answer(
-                    "❌ Дата не может быть в прошлом. "
+                    "❌ Дата не может быть в прошлом или сегодня. "
                     "Пожалуйста, введите будущую дату."
                 )
                 return
@@ -692,9 +675,9 @@ async def update_due_date_finish(message: types.Message, state: FSMContext):
         date_str = message.text.strip()
         new_due_date = datetime.strptime(date_str, "%d.%m.%Y")
 
-        # Check if date is not in the past
-        if new_due_date.date() < get_now().date():
-            await message.answer("❌ Due date cannot be in the past. Please enter a future date.")
+        # Check if date is not in the past or today
+        if new_due_date.date() <= get_now().date():
+            await message.answer("❌ Due date cannot be in the past or today. Please enter a future date.")
             return
 
     except ValueError:
@@ -734,36 +717,87 @@ async def update_due_date_finish(message: types.Message, state: FSMContext):
 
 @admin_router.callback_query(F.data == "admin_stats")
 async def view_statistics(callback: types.CallbackQuery):
-    """View payment statistics"""
+    """View detailed statistics with all payment groups and members - page 0"""
+    await view_statistics_page(callback, page=0)
+
+
+@admin_router.callback_query(F.data.startswith("admin_stats_page_"))
+async def view_statistics_page_handler(callback: types.CallbackQuery):
+    """Handle pagination for statistics"""
+    page = int(callback.data.split("_")[-1])
+    await view_statistics_page(callback, page)
+
+
+async def view_statistics_page(callback: types.CallbackQuery, page: int = 0):
+    """View detailed statistics with all payment groups and members"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("Доступ запрещён", show_alert=True)
         return
 
-    # Get basic statistics
     groups = await db.get_all_groups()
-    overdue_users = await db.get_overdue_users()
 
+    if not groups:
+        await callback.message.edit_text("📭 Группы оплаты не найдены.")
+        return
+
+    # Pagination settings
+    GROUPS_PER_PAGE = 3  # Fewer groups per page for statistics (more detailed info)
     total_groups = len(groups)
-    total_overdue = len(overdue_users)
+    total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
+    
+    # Validate page number
+    if page < 0 or page >= total_pages:
+        page = 0
+    
+    # Get groups for current page
+    start_idx = page * GROUPS_PER_PAGE
+    end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
+    page_groups = groups[start_idx:end_idx]
 
-    # Calculate some basic stats
-    upcoming_payments = 0
-    for group in groups:
+    response = f"📈 <b>Статистика - Все группы оплаты с участниками (стр. {page + 1}/{total_pages}):</b>\n\n"
+
+    for group in page_groups:
         days_until = calculate_days_until(group.next_payment_date)
-        if 0 <= days_until <= 7:  # Due within a week
-            upcoming_payments += 1
+        emoji = get_payment_status_emoji(days_until)
 
-    response = (
-        f"📈 **Payment Statistics**\n\n"
-        f"👥 Total groups: {total_groups}\n"
-        f"❌ Overdue payments: {total_overdue}\n"
-        f"⚠️ Due within 7 days: {upcoming_payments}\n"
-        f"✅ Up to date: {total_groups - total_overdue - upcoming_payments}\n\n"
-        f"📊 System Status: {'✅ Healthy' if total_overdue == 0 else '⚠️ Needs Attention'}"
-    )
+        # Get members for this group
+        members = await db.get_group_members(group.group_id)
 
-    await callback.message.edit_text(response, parse_mode="Markdown")
+        response += (
+            f"{emoji} <b>Группа: {group.group_name}</b> (ID: {group.display_id})\n"
+            f"📅 Следующий платёж: {format_date(group.next_payment_date)}\n"
+        )
+
+        if members:
+            response += f"👥 <b>Участники ({len(members)}):</b>\n"
+            for idx, member in enumerate(members, 1):
+                first_name = member['first_name'] or 'N/A'
+                username_display = f"@{member['username']}" if member['username'] else 'нет username'
+
+                # Determine payment status
+                if member['is_overdue']:
+                    status = "❌ Просрочено"
+                else:
+                    member_days = (
+                        member['next_payment_date'] - get_now().date()).days
+                    if member_days <= 3:
+                        status = "⚠️ Скоро срок"
+                    else:
+                        status = "✅ Оплачено"
+
+                response += (
+                    f"   {idx}. {first_name} - {username_display} - {status}\n"
+                )
+        else:
+            response += "👥 <i>Участников нет</i>\n"
+
+        response += "\n"
+
+    # Add pagination keyboard
+    keyboard = get_pagination_keyboard(page, total_pages, "admin_stats", show_back=True)
+    
+    await callback.message.edit_text(response, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
 
 
@@ -1137,7 +1171,19 @@ async def cancel_import_groups(callback: types.CallbackQuery, state: FSMContext)
 
 @admin_router.callback_query(F.data == "admin_delete_group")
 async def delete_group_start(callback: types.CallbackQuery, state: FSMContext):
-    """Start group deletion process"""
+    """Start group deletion process - page 0"""
+    await delete_group_page(callback, state, page=0)
+
+
+@admin_router.callback_query(F.data.startswith("delete_group_page_"))
+async def delete_group_page_handler(callback: types.CallbackQuery, state: FSMContext):
+    """Handle pagination for delete group"""
+    page = int(callback.data.split("_")[-1])
+    await delete_group_page(callback, state, page)
+
+
+async def delete_group_page(callback: types.CallbackQuery, state: FSMContext, page: int = 0):
+    """Show paginated group list for deletion"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
         await callback.answer("Доступ запрещён", show_alert=True)
@@ -1149,12 +1195,26 @@ async def delete_group_start(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❌ Нет доступных групп для удаления.")
         return
 
-    groups_text = "🗑️ **Удаление группы**\n\n"
+    # Pagination settings
+    GROUPS_PER_PAGE = 5
+    total_groups = len(groups)
+    total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
+    
+    # Validate page number
+    if page < 0 or page >= total_pages:
+        page = 0
+    
+    # Get groups for current page
+    start_idx = page * GROUPS_PER_PAGE
+    end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
+    page_groups = groups[start_idx:end_idx]
+
+    groups_text = f"🗑️ **Удаление группы (стр. {page + 1}/{total_pages})**\n\n"
     groups_text += "⚠️ **ВНИМАНИЕ**: Удаление группы необратимо!\n"
     groups_text += "Будут удалены:\n• Все участники группы\n• История платежей\n• Все связанные данные\n\n"
     groups_text += "Доступные группы:\n\n"
 
-    for group in groups:
+    for group in page_groups:
         # Get member count
         members = await db.get_group_members(group.group_id)
         member_count = len(members)
@@ -1168,7 +1228,10 @@ async def delete_group_start(callback: types.CallbackQuery, state: FSMContext):
     groups_text += "Введите название группы для удаления:\n\n"
     groups_text += "💡 *Используйте /admin для отмены операции*"
 
-    await callback.message.edit_text(groups_text, parse_mode="Markdown")
+    # Add pagination keyboard
+    keyboard = get_pagination_keyboard(page, total_pages, "delete_group", show_back=True)
+
+    await callback.message.edit_text(groups_text, parse_mode="Markdown", reply_markup=keyboard)
     await state.set_state(AdminStates.deleting_group_select)
     await callback.answer()
 
@@ -1284,7 +1347,19 @@ async def cancel_group_deletion(callback: types.CallbackQuery, state: FSMContext
 
 @admin_router.callback_query(F.data == "admin_manage_members")
 async def manage_members_start(callback: types.CallbackQuery, state: FSMContext):
-    """Start member management"""
+    """Start member management - page 0"""
+    await manage_members_page(callback, state, page=0)
+
+
+@admin_router.callback_query(F.data.startswith("manage_members_page_"))
+async def manage_members_page_handler(callback: types.CallbackQuery, state: FSMContext):
+    """Handle pagination for manage members"""
+    page = int(callback.data.split("_")[-1])
+    await manage_members_page(callback, state, page)
+
+
+async def manage_members_page(callback: types.CallbackQuery, state: FSMContext, page: int = 0):
+    """Show paginated group list for member management"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
         await callback.answer("Доступ запрещён", show_alert=True)
@@ -1295,10 +1370,24 @@ async def manage_members_start(callback: types.CallbackQuery, state: FSMContext)
         await callback.message.edit_text("❌ Нет доступных групп.")
         return
 
-    groups_text = "👥 **Управление участниками групп**\n\n"
+    # Pagination settings
+    GROUPS_PER_PAGE = 5
+    total_groups = len(groups)
+    total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
+    
+    # Validate page number
+    if page < 0 or page >= total_pages:
+        page = 0
+    
+    # Get groups for current page
+    start_idx = page * GROUPS_PER_PAGE
+    end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
+    page_groups = groups[start_idx:end_idx]
+
+    groups_text = f"👥 **Управление участниками групп (стр. {page + 1}/{total_pages})**\n\n"
     groups_text += "Выберите группу для просмотра участников:\n\n"
 
-    for group in groups:
+    for group in page_groups:
         members = await db.get_group_members(group.group_id)
         member_count = len(members)
 
@@ -1310,7 +1399,10 @@ async def manage_members_start(callback: types.CallbackQuery, state: FSMContext)
     groups_text += "Введите название группы:\n\n"
     groups_text += "💡 *Используйте /admin для отмены операции*"
 
-    await callback.message.edit_text(groups_text, parse_mode="Markdown")
+    # Add pagination keyboard
+    keyboard = get_pagination_keyboard(page, total_pages, "manage_members", show_back=True)
+
+    await callback.message.edit_text(groups_text, parse_mode="Markdown", reply_markup=keyboard)
     await state.set_state(AdminStates.removing_user_select_group)
     await callback.answer()
 
@@ -1424,6 +1516,29 @@ async def remove_user_from_group(message: types.Message, state: FSMContext):
         )
 
     await state.clear()
+
+
+@admin_router.callback_query(F.data == "back_to_admin_menu")
+async def back_to_admin_menu(callback: types.CallbackQuery):
+    """Return to admin main menu"""
+    user_id = callback.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        "🔧 **Панель администратора**\n\n"
+        "Выберите действие:",
+        reply_markup=get_admin_main_keyboard(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data == "noop")
+async def noop_handler(callback: types.CallbackQuery):
+    """Handle no-operation callbacks (like page indicators)"""
+    await callback.answer()
 
 
 # Handle any unrecognized admin callback

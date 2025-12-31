@@ -28,25 +28,14 @@ def get_admin_main_keyboard() -> InlineKeyboardMarkup:
     
     builder.row(
         InlineKeyboardButton(text="👥 Просмотр групп", callback_data="admin_view_groups"),
-        InlineKeyboardButton(text="📊 Просроченные пользователи", callback_data="admin_overdue_users")
+        InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats")
     )
     builder.row(
         InlineKeyboardButton(text="➕ Создать группу", callback_data="admin_create_group"),
-        InlineKeyboardButton(text="�️ Удалить группу", callback_data="admin_delete_group")
+        InlineKeyboardButton(text="🗑️ Удалить группу", callback_data="admin_delete_group")
     )
     builder.row(
-        InlineKeyboardButton(text="�👤 Добавить пользователя", callback_data="admin_add_user"),
         InlineKeyboardButton(text="👥 Управление участниками", callback_data="admin_manage_members")
-    )
-    builder.row(
-        InlineKeyboardButton(text="� Импорт групп", callback_data="admin_import_groups")
-    )
-    builder.row(
-        InlineKeyboardButton(text="�📅 Обновить дату платежа", callback_data="admin_update_due_date")
-    )
-    builder.row(
-        InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats"),
-        InlineKeyboardButton(text="🔔 Тест уведомлений", callback_data="admin_test_notifications")
     )
 
     return builder.as_markup()
@@ -75,5 +64,60 @@ def get_user_main_menu() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="❓ Помощь", callback_data="user_help")
     )
+    
+    return builder.as_markup()
+
+
+def get_pagination_keyboard(
+    current_page: int, 
+    total_pages: int, 
+    callback_prefix: str,
+    show_back: bool = False
+) -> InlineKeyboardMarkup:
+    """
+    Create pagination keyboard with Previous/Next buttons
+    
+    Args:
+        current_page: Current page number (0-indexed)
+        total_pages: Total number of pages
+        callback_prefix: Prefix for callback data (e.g., 'view_groups', 'admin_stats')
+        show_back: Whether to show a "Back to menu" button
+    
+    Returns:
+        InlineKeyboardMarkup with navigation buttons
+    """
+    builder = InlineKeyboardBuilder()
+    
+    # Navigation buttons
+    buttons = []
+    
+    if current_page > 0:
+        buttons.append(InlineKeyboardButton(
+            text="⬅️ Назад", 
+            callback_data=f"{callback_prefix}_page_{current_page - 1}"
+        ))
+    
+    # Page indicator
+    buttons.append(InlineKeyboardButton(
+        text=f"📄 {current_page + 1}/{total_pages}",
+        callback_data="noop"  # No operation
+    ))
+    
+    if current_page < total_pages - 1:
+        buttons.append(InlineKeyboardButton(
+            text="Вперёд ➡️", 
+            callback_data=f"{callback_prefix}_page_{current_page + 1}"
+        ))
+    
+    builder.row(*buttons)
+    
+    # Back to menu button
+    if show_back:
+        builder.row(
+            InlineKeyboardButton(
+                text="🔙 Главное меню", 
+                callback_data="back_to_admin_menu"
+            )
+        )
     
     return builder.as_markup()

@@ -587,12 +587,13 @@ class Database:
                         g.group_id,
                         g.group_name,
                         g.display_id as group_display_id,
+                        g.payment_day_of_month,
                         COALESCE(
                             (SELECT next_payment_date FROM payments 
                              WHERE user_id = ug.user_id AND group_id = g.group_id 
                              ORDER BY payment_date DESC LIMIT 1),
-                            g.next_payment_date
-                        ) as next_payment_date,
+                            NULL
+                        ) as next_payment_date_from_payments,
                         (SELECT payment_date FROM payments 
                          WHERE user_id = ug.user_id AND group_id = g.group_id 
                          ORDER BY payment_date DESC LIMIT 1) as last_payment_date
@@ -607,7 +608,17 @@ class Database:
                 if not row:
                     return None
 
-                next_payment = row['next_payment_date']
+                # Calculate next payment date
+                if row['next_payment_date_from_payments']:
+                    # User has made payments, use that date
+                    next_payment = row['next_payment_date_from_payments']
+                else:
+                    # User hasn't paid yet - set initial payment to current_date + 1 month
+                    from bot.utils.helpers import add_months_to_date
+                    current_time = get_now()
+                    payment_day = row['payment_day_of_month']
+                    next_payment = add_months_to_date(current_time, 1, payment_day)
+
                 # Convert datetime to date if needed for comparison
                 if isinstance(next_payment, datetime):
                     next_payment_date = next_payment.date()
@@ -616,7 +627,8 @@ class Database:
 
                 # Compare dates only, not datetime (to avoid time-of-day issues)
                 today = get_now().date()
-                is_overdue = next_payment_date < today
+                # User is overdue if payment date has arrived (including today)
+                is_overdue = next_payment_date <= today
 
                 # Calculate months remaining (rough estimate)
                 days_diff = (next_payment_date - today).days
@@ -992,33 +1004,43 @@ class Database:
                     SELECT u.user_id, u.username, u.first_name, u.display_id,
                            COUNT(p.payment_id) as total_payments,
                            MAX(p.payment_date) as last_payment,
-                           COALESCE(
-                               (SELECT next_payment_date FROM payments 
-                                WHERE user_id = u.user_id AND group_id = $1 
-                                ORDER BY payment_date DESC LIMIT 1),
-                               g.next_payment_date
-                           ) as next_payment_date
+                           g.payment_day_of_month,
+                           (SELECT next_payment_date FROM payments 
+                            WHERE user_id = u.user_id AND group_id = $1 
+                            ORDER BY payment_date DESC LIMIT 1) as next_payment_date_from_payments
                     FROM users u
                     JOIN user_groups ug ON u.user_id = ug.user_id
                     JOIN groups g ON ug.group_id = g.group_id
                     LEFT JOIN payments p ON u.user_id = p.user_id AND p.group_id = $1
                     WHERE ug.group_id = $1
-                    GROUP BY u.user_id, u.username, u.first_name, u.display_id, g.next_payment_date
+                    GROUP BY u.user_id, u.username, u.first_name, u.display_id, g.payment_day_of_month
                     ORDER BY u.display_id
                     """,
                     group_id
                 )
 
+                from bot.utils.helpers import add_months_to_date
                 today = get_now().date()
+                current_time = get_now()
                 members = []
                 for row in rows:
-                    next_payment = row['next_payment_date']
+                    # Calculate next payment date
+                    if row['next_payment_date_from_payments']:
+                        # User has made payments, use that date
+                        next_payment = row['next_payment_date_from_payments']
+                    else:
+                        # User hasn't paid yet - set initial payment to current_date + 1 month
+                        payment_day = row['payment_day_of_month']
+                        next_payment = add_months_to_date(current_time, 1, payment_day)
+                    
                     # Convert datetime to date for comparison
                     if isinstance(next_payment, datetime):
                         next_payment_date = next_payment.date()
                     else:
                         next_payment_date = next_payment
-                    is_overdue = next_payment_date < today
+                    
+                    # User is overdue if payment date has arrived (including today)
+                    is_overdue = next_payment_date <= today
 
                     members.append({
                         'user_id': row['user_id'],
