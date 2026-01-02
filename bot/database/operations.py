@@ -613,11 +613,17 @@ class Database:
                     # User has made payments, use that date
                     next_payment = row['next_payment_date_from_payments']
                 else:
-                    # User hasn't paid yet - set initial payment to current_date + 1 month
+                    # User hasn't paid yet - set initial payment based on join date
                     from bot.utils.helpers import add_months_to_date
                     current_time = get_now()
                     payment_day = row['payment_day_of_month']
-                    next_payment = add_months_to_date(current_time, 1, payment_day)
+                    
+                    # If joining on payment day, payment is due today
+                    if current_time.day == payment_day:
+                        next_payment = current_time.replace(day=payment_day)
+                    else:
+                        # Otherwise, payment is due next month on payment day
+                        next_payment = add_months_to_date(current_time, 1, payment_day)
 
                 # Convert datetime to date if needed for comparison
                 if isinstance(next_payment, datetime):
@@ -1029,9 +1035,15 @@ class Database:
                         # User has made payments, use that date
                         next_payment = row['next_payment_date_from_payments']
                     else:
-                        # User hasn't paid yet - set initial payment to current_date + 1 month
+                        # User hasn't paid yet - set initial payment based on join date
                         payment_day = row['payment_day_of_month']
-                        next_payment = add_months_to_date(current_time, 1, payment_day)
+                        
+                        # If joining on payment day, payment is due today
+                        if current_time.day == payment_day:
+                            next_payment = current_time.replace(day=payment_day)
+                        else:
+                            # Otherwise, payment is due next month on payment day
+                            next_payment = add_months_to_date(current_time, 1, payment_day)
                     
                     # Convert datetime to date for comparison
                     if isinstance(next_payment, datetime):
