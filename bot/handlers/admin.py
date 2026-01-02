@@ -298,9 +298,6 @@ async def view_groups_page(callback: types.CallbackQuery, page: int = 0):
     response = f"👥 <b>Все группы оплаты с участниками (стр. {page + 1}/{total_pages}):</b>\n\n"
 
     for group in page_groups:
-        days_until = calculate_days_until(group.next_payment_date)
-        emoji = get_payment_status_emoji(days_until)
-
         # Get members for this group
         members = await db.get_group_members(group.group_id)
         total_members = len(members) if members else 0
@@ -311,6 +308,16 @@ async def view_groups_page(callback: types.CallbackQuery, page: int = 0):
             for member in members:
                 if not member['is_overdue']:
                     paid_count += 1
+
+        # Determine emoji based on member payment status
+        if total_members == 0:
+            emoji = "📭"  # Empty group
+        elif paid_count == total_members:
+            emoji = "✅"  # All paid
+        elif paid_count == 0:
+            emoji = "❌"  # None paid
+        else:
+            emoji = "⚠️"  # Partially paid
 
         response += (
             f"{emoji} <b>Группа: {group.group_name}</b> (ID: {group.display_id})\n"
@@ -772,11 +779,26 @@ async def view_statistics_page(callback: types.CallbackQuery, page: int = 0):
     response = f"📈 <b>Статистика - Все группы оплаты с участниками (стр. {page + 1}/{total_pages}):</b>\n\n"
 
     for group in page_groups:
-        days_until = calculate_days_until(group.next_payment_date)
-        emoji = get_payment_status_emoji(days_until)
-
         # Get members for this group
         members = await db.get_group_members(group.group_id)
+        total_members = len(members) if members else 0
+
+        # Count members who have paid (not overdue)
+        paid_count = 0
+        if members:
+            for member in members:
+                if not member['is_overdue']:
+                    paid_count += 1
+
+        # Determine emoji based on member payment status
+        if total_members == 0:
+            emoji = "📭"  # Empty group
+        elif paid_count == total_members:
+            emoji = "✅"  # All paid
+        elif paid_count == 0:
+            emoji = "❌"  # None paid
+        else:
+            emoji = "⚠️"  # Partially paid
 
         response += (
             f"{emoji} <b>Группа: {group.group_name}</b> (ID: {group.display_id})\n"
