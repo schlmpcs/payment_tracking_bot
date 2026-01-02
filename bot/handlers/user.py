@@ -241,8 +241,8 @@ async def help_command(message: types.Message):
         return
 
     help_text = (
-        "🤖 **Справка по боту Spotify Payment**\n\n"
-        "**Доступные команды:**\n"
+        "🤖 <b>Справка по боту Spotify Payment</b>\n\n"
+        "<b>Доступные команды:</b>\n"
         "🏠 /start - Приветственное сообщение и обзор статуса\n"
         "🆔 /id - Показать ваш ID для администратора\n"
         "🚪 /join - Присоединиться к группе оплаты\n"
@@ -250,19 +250,19 @@ async def help_command(message: types.Message):
         "📊 /status - Проверить статус ваших платежей\n"
         "📈 /history - Показать историю платежей\n"
         "❓ /help - Показать эту справку\n\n"
-        "**Как оплатить:**\n"
+        "<b>Как оплатить:</b>\n"
         "1. Используйте команду /pay\n"
         "2. Выберите количество месяцев для оплаты (1-6)\n"
         "3. Загрузите чек банковского перевода\n"
         "4. Платёж будет обработан автоматически\n\n"
-        "**Поддерживаемые форматы чеков:**\n"
+        "<b>Поддерживаемые форматы чеков:</b>\n"
         "• 📷 Фотографии (JPG, PNG)\n"
         "• 📄 PDF документы\n\n"
-        "**Нужна помощь?** Обратитесь к @sptfy_premium, если у вас есть проблемы.\n\n"
+        "<b>Нужна помощь?</b> Обратитесь к @sptfy_premium, если у вас есть проблемы.\n\n"
         "💡 Используйте /start для возврата в главное меню"
     )
 
-    await message.answer(help_text, parse_mode="Markdown", reply_markup=get_user_main_menu())
+    await message.answer(help_text, parse_mode="HTML", reply_markup=get_user_main_menu())
 
 
 @user_router.message(Command("id"))
