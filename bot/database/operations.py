@@ -628,11 +628,13 @@ class Database:
                     current_time = get_now()
                     payment_day = row['payment_day_of_month']
 
-                    # If joining on payment day, payment is due today
-                    if current_time.day == payment_day:
+                    # If joining within 2 days after payment day, set to current month
+                    # Otherwise, set to next month
+                    if current_time.day <= payment_day + 2:
+                        # Within grace period - payment due this month
                         next_payment = current_time.replace(day=payment_day)
                     else:
-                        # Otherwise, payment is due next month on payment day
+                        # Past grace period - payment due next month
                         next_payment = add_months_to_date(
                             current_time, 1, payment_day)
 
@@ -1070,12 +1072,14 @@ class Database:
                         # User hasn't paid yet - set initial payment based on join date
                         payment_day = row['payment_day_of_month']
 
-                        # If joining on payment day, payment is due today
-                        if current_time.day == payment_day:
+                        # If joining within 2 days after payment day, set to current month
+                        # Otherwise, set to next month
+                        if current_time.day <= payment_day + 2:
+                            # Within grace period - payment due this month
                             next_payment = current_time.replace(
                                 day=payment_day)
                         else:
-                            # Otherwise, payment is due next month on payment day
+                            # Past grace period - payment due next month
                             next_payment = add_months_to_date(
                                 current_time, 1, payment_day)
 
