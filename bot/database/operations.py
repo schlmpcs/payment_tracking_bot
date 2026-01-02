@@ -340,9 +340,19 @@ class Database:
 
         try:
             async with self.pool.acquire() as conn:
-                # Get next display ID and format group name
-                display_id = await self._get_next_group_display_id()
-                formatted_group_name = format_group_name(display_id)
+                # Check if the group_name is just a number (display ID)
+                if group_name.isdigit():
+                    # Use the provided display ID
+                    display_id = group_name
+                    formatted_group_name = format_group_name(display_id)
+                else:
+                    # Extract display ID from group name if it's in "spotify XXX" format
+                    if group_name.lower().startswith('spotify '):
+                        display_id = group_name.split()[-1]
+                    else:
+                        # Generate next display ID for custom names
+                        display_id = await self._get_next_group_display_id()
+                    formatted_group_name = group_name
 
                 # Extract payment day (ensure 1-28)
                 payment_day = next_payment_date.day
@@ -617,13 +627,14 @@ class Database:
                     from bot.utils.helpers import add_months_to_date
                     current_time = get_now()
                     payment_day = row['payment_day_of_month']
-                    
+
                     # If joining on payment day, payment is due today
                     if current_time.day == payment_day:
                         next_payment = current_time.replace(day=payment_day)
                     else:
                         # Otherwise, payment is due next month on payment day
-                        next_payment = add_months_to_date(current_time, 1, payment_day)
+                        next_payment = add_months_to_date(
+                            current_time, 1, payment_day)
 
                 # Convert datetime to date if needed for comparison
                 if isinstance(next_payment, datetime):
@@ -885,8 +896,8 @@ class Database:
                 f"Failed to check user registration for {user_id}: {e}")
             return False
 
-    async def get_group_by_display_id(self, display_id: int) -> Optional[Group]:
-        """Get group by display ID"""
+    async def get_group_by_display_id(self, display_id: str) -> Optional[Group]:
+        """Get group by display ID (as string)"""
         if not self.pool:
             return None
 
@@ -898,7 +909,7 @@ class Database:
                     FROM groups 
                     WHERE display_id = $1
                     """,
-                    display_id
+                    str(display_id)
                 )
 
                 return Group(*row) if row else None
@@ -906,6 +917,27 @@ class Database:
         except Exception as e:
             self.logger.error(
                 f"Failed to get group by display_id {display_id}: {e}")
+            return None
+
+    async def get_group_by_name_or_id(self, identifier: str) -> Optional[Group]:
+        """Get group by either full name or display ID (e.g., 'spotify 001' or '001')"""
+        if not self.pool:
+            return None
+
+        try:
+            # First try as display ID (if it's a number)
+            if identifier.isdigit():
+                group = await self.get_group_by_display_id(identifier)
+                if group:
+                    return group
+
+            # Try as full group name
+            group = await self.get_group_by_name(identifier)
+            return group
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to get group by identifier '{identifier}': {e}")
             return None
 
     async def bulk_import_groups(self, groups_data: List[dict]) -> int:
@@ -1037,20 +1069,22 @@ class Database:
                     else:
                         # User hasn't paid yet - set initial payment based on join date
                         payment_day = row['payment_day_of_month']
-                        
+
                         # If joining on payment day, payment is due today
                         if current_time.day == payment_day:
-                            next_payment = current_time.replace(day=payment_day)
+                            next_payment = current_time.replace(
+                                day=payment_day)
                         else:
                             # Otherwise, payment is due next month on payment day
-                            next_payment = add_months_to_date(current_time, 1, payment_day)
-                    
+                            next_payment = add_months_to_date(
+                                current_time, 1, payment_day)
+
                     # Convert datetime to date for comparison
                     if isinstance(next_payment, datetime):
                         next_payment_date = next_payment.date()
                     else:
                         next_payment_date = next_payment
-                    
+
                     # User is overdue if payment date has arrived (including today)
                     is_overdue = next_payment_date <= today
 

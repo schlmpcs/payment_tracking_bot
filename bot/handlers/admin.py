@@ -249,7 +249,7 @@ async def update_due_date_command(message: types.Message, state: FSMContext):
             f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
         )
 
-    groups_text += "Пожалуйста, введите название группы, которую хотите обновить:"
+    groups_text += "Пожалуйста, введите название группы или ID (например: 'spotify 001' или '001'):"
 
     await message.answer(groups_text, parse_mode="Markdown")
     await state.set_state(AdminStates.updating_due_date_group)
@@ -285,11 +285,11 @@ async def view_groups_page(callback: types.CallbackQuery, page: int = 0):
     GROUPS_PER_PAGE = 5
     total_groups = len(groups)
     total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
-    
+
     # Validate page number
     if page < 0 or page >= total_pages:
         page = 0
-    
+
     # Get groups for current page
     start_idx = page * GROUPS_PER_PAGE
     end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
@@ -319,8 +319,9 @@ async def view_groups_page(callback: types.CallbackQuery, page: int = 0):
         )
 
     # Add pagination keyboard
-    keyboard = get_pagination_keyboard(page, total_pages, "view_groups", show_back=True)
-    
+    keyboard = get_pagination_keyboard(
+        page, total_pages, "view_groups", show_back=True)
+
     await callback.message.edit_text(response, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
 
@@ -386,6 +387,18 @@ async def create_group_finish(message: types.Message, state: FSMContext):
         await message.answer(
             "❌ Название группы не может быть пустым. "
             "Пожалуйста, попробуйте снова."
+        )
+        return
+
+    # Check if group already exists (either by full name or display ID)
+    existing_group = await db.get_group_by_name_or_id(group_name)
+    if existing_group:
+        await message.answer(
+            f"❌ Группа с таким названием или ID уже существует:\n\n"
+            f"👥 Название: <b>{existing_group.group_name}</b>\n"
+            f"🆔 ID: <b>{existing_group.display_id}</b>\n\n"
+            f"Пожалуйста, введите другое название или используйте /admin для отмены.",
+            parse_mode="HTML"
         )
         return
 
@@ -622,12 +635,12 @@ async def update_due_date_get_date(message: types.Message, state: FSMContext):
     if not is_admin(user_id, settings.tg_admin_ids):
         return
 
-    group_name = message.text.strip()
+    identifier = message.text.strip()
 
-    # Get group
-    group = await db.get_group_by_name(group_name)
+    # Get group by name or display ID
+    group = await db.get_group_by_name_or_id(identifier)
     if not group:
-        await message.answer(f"❌ Group '{group_name}' not found. Please try again.")
+        await message.answer(f"❌ Группа '{identifier}' не найдена. Пожалуйста, попробуйте снова.")
         return
 
     await state.update_data(group=group)
@@ -742,14 +755,15 @@ async def view_statistics_page(callback: types.CallbackQuery, page: int = 0):
         return
 
     # Pagination settings
-    GROUPS_PER_PAGE = 3  # Fewer groups per page for statistics (more detailed info)
+    # Fewer groups per page for statistics (more detailed info)
+    GROUPS_PER_PAGE = 3
     total_groups = len(groups)
     total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
-    
+
     # Validate page number
     if page < 0 or page >= total_pages:
         page = 0
-    
+
     # Get groups for current page
     start_idx = page * GROUPS_PER_PAGE
     end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
@@ -795,8 +809,9 @@ async def view_statistics_page(callback: types.CallbackQuery, page: int = 0):
         response += "\n"
 
     # Add pagination keyboard
-    keyboard = get_pagination_keyboard(page, total_pages, "admin_stats", show_back=True)
-    
+    keyboard = get_pagination_keyboard(
+        page, total_pages, "admin_stats", show_back=True)
+
     await callback.message.edit_text(response, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
 
@@ -1199,11 +1214,11 @@ async def delete_group_page(callback: types.CallbackQuery, state: FSMContext, pa
     GROUPS_PER_PAGE = 5
     total_groups = len(groups)
     total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
-    
+
     # Validate page number
     if page < 0 or page >= total_pages:
         page = 0
-    
+
     # Get groups for current page
     start_idx = page * GROUPS_PER_PAGE
     end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
@@ -1225,11 +1240,12 @@ async def delete_group_page(callback: types.CallbackQuery, state: FSMContext, pa
             f"📅 Следующий платёж: {format_date(group.next_payment_date)}\n\n"
         )
 
-    groups_text += "Введите название группы для удаления:\n\n"
+    groups_text += "Введите название группы или ID для удаления (например: 'spotify 001' или '001'):\n\n"
     groups_text += "💡 *Используйте /admin для отмены операции*"
 
     # Add pagination keyboard
-    keyboard = get_pagination_keyboard(page, total_pages, "delete_group", show_back=True)
+    keyboard = get_pagination_keyboard(
+        page, total_pages, "delete_group", show_back=True)
 
     await callback.message.edit_text(groups_text, parse_mode="Markdown", reply_markup=keyboard)
     await state.set_state(AdminStates.deleting_group_select)
@@ -1246,14 +1262,14 @@ async def delete_group_confirm(message: types.Message, state: FSMContext):
     if not is_admin(user_id, settings.tg_admin_ids):
         return
 
-    group_name = message.text.strip()
+    identifier = message.text.strip()
 
-    # Find the group
-    group = await db.get_group_by_name(group_name)
+    # Find the group by name or display ID
+    group = await db.get_group_by_name_or_id(identifier)
     if not group:
         await message.answer(
-            f"❌ Группа '{group_name}' не найдена.\n\n"
-            f"Проверьте название и попробуйте снова, или используйте /admin для отмены."
+            f"❌ Группа '{identifier}' не найдена.\n\n"
+            f"Проверьте название или ID и попробуйте снова, или используйте /admin для отмены."
         )
         return
 
@@ -1374,11 +1390,11 @@ async def manage_members_page(callback: types.CallbackQuery, state: FSMContext, 
     GROUPS_PER_PAGE = 5
     total_groups = len(groups)
     total_pages = (total_groups + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
-    
+
     # Validate page number
     if page < 0 or page >= total_pages:
         page = 0
-    
+
     # Get groups for current page
     start_idx = page * GROUPS_PER_PAGE
     end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
@@ -1396,11 +1412,12 @@ async def manage_members_page(callback: types.CallbackQuery, state: FSMContext, 
             f"👥 Участников: {member_count}\n\n"
         )
 
-    groups_text += "Введите название группы:\n\n"
+    groups_text += "Введите название группы или ID (например: 'spotify 001' или '001'):\n\n"
     groups_text += "💡 *Используйте /admin для отмены операции*"
 
     # Add pagination keyboard
-    keyboard = get_pagination_keyboard(page, total_pages, "manage_members", show_back=True)
+    keyboard = get_pagination_keyboard(
+        page, total_pages, "manage_members", show_back=True)
 
     await callback.message.edit_text(groups_text, parse_mode="Markdown", reply_markup=keyboard)
     await state.set_state(AdminStates.removing_user_select_group)
@@ -1417,13 +1434,13 @@ async def show_group_members(message: types.Message, state: FSMContext):
     if not is_admin(user_id, settings.tg_admin_ids):
         return
 
-    group_name = message.text.strip()
+    identifier = message.text.strip()
 
-    group = await db.get_group_by_name(group_name)
+    group = await db.get_group_by_name_or_id(identifier)
     if not group:
         await message.answer(
-            f"❌ Группа '{group_name}' не найдена.\n\n"
-            f"Проверьте название и попробуйте снова, или используйте /admin для отмены."
+            f"❌ Группа '{identifier}' не найдена.\n\n"
+            f"Проверьте название или ID и попробуйте снова, или используйте /admin для отмены."
         )
         return
 
@@ -1525,7 +1542,7 @@ async def back_to_admin_menu(callback: types.CallbackQuery):
     if not is_admin(user_id, settings.tg_admin_ids):
         await callback.answer("Доступ запрещён", show_alert=True)
         return
-    
+
     await callback.message.edit_text(
         "🔧 **Панель администратора**\n\n"
         "Выберите действие:",
