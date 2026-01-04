@@ -523,10 +523,14 @@ class Database:
             return None
 
     # Payment operations
-    async def add_payment(self, user_id: int, group_id: int, months_paid: int, receipt_file_id: Optional[str] = None) -> bool:
-        """Record a payment"""
+    async def add_payment(self, user_id: int, group_id: int, months_paid: int, receipt_file_id: Optional[str] = None) -> Tuple[bool, Optional[datetime]]:
+        """Record a payment and return success status with next payment date
+        
+        Returns:
+            Tuple[bool, Optional[datetime]]: (success, next_payment_date)
+        """
         if not self.pool:
-            return False
+            return False, None
 
         try:
             async with self.pool.acquire() as conn:
@@ -577,10 +581,10 @@ class Database:
 
                 self.logger.info(
                     f"Payment recorded: User {user_id}, Group {group_id}, {months_paid} months")
-                return True
+                return True, next_payment_date
         except Exception as e:
             self.logger.error(f"Failed to add payment for user {user_id}: {e}")
-            return False
+            return False, None
 
     async def get_user_payment_status(self, user_id: int) -> Optional[PaymentStatus]:
         """Get user's current payment status"""

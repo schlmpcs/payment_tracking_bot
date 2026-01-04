@@ -620,8 +620,12 @@ async def handle_months_selection(callback: types.CallbackQuery, state: FSMConte
 
     await state.update_data(months=months)
 
+    # Calculate payment amount
+    amount = months * settings.bot_default_payment_price
+
     await callback.message.edit_text(
         f"✅ Вы выбрали **{months} месяц{'ев' if months > 1 else ''}**\n\n"
+        f"💰 **Нужно оплатить:** {amount} ₸\n\n"
         f"📎 Пожалуйста, загрузите чек об оплате\n\n"
         f"💡 Поддерживаемые форматы: JPG, PNG, PDF\n"
         f"После загрузки ваш платёж будет обработан автоматически.\n\n"
@@ -670,7 +674,7 @@ async def forward_receipt_to_storage(message: types.Message, user_info: dict, pa
     Args:
         message: Original message with receipt
         user_info: Dict with user details (id, username, first_name, etc.)
-        payment_info: Dict with payment details (months, group_name, amount, etc.)
+        payment_info: Dict with payment details (months, group_name, next_payment_date, etc.)
 
     Returns:
         bool: True if forwarded successfully, False otherwise
@@ -689,6 +693,7 @@ async def forward_receipt_to_storage(message: types.Message, user_info: dict, pa
             f"💰 <b>Детали платежа:</b>\n"
             f"• Группа: {payment_info['group_name']}\n"
             f"• Месяцев оплачено: {payment_info['months']}\n"
+            f"• Следующий платёж до: {format_date(payment_info['next_payment_date'])}\n"
             f"• Время: {format_datetime(get_now())}\n\n"
             f"📸 <b>Чек во вложении ниже:</b>"
         )
@@ -732,8 +737,8 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
             await state.clear()
             return
 
-        # Record payment
-        success = await db.add_payment(user_id, group.group_id, months, file_id)
+        # Record payment and get the new next payment date
+        success, next_payment_date = await db.add_payment(user_id, group.group_id, months, file_id)
 
         if success:
             await message.answer(
@@ -761,7 +766,8 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
             payment_info = {
                 'months': months,
                 'group_name': group.group_name,
-                'group_id': group.group_id
+                'group_id': group.group_id,
+                'next_payment_date': next_payment_date
             }
 
             await forward_receipt_to_storage(message, user_info, payment_info)
