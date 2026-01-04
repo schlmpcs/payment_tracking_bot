@@ -755,7 +755,7 @@ async def view_statistics_page(callback: types.CallbackQuery, page: int = 0):
         await callback.answer("Доступ запрещён", show_alert=True)
         return
 
-    groups = await db.get_all_groups()
+    groups = await db.get_all_groups_for_statistics()
 
     if not groups:
         await callback.message.edit_text("📭 Группы оплаты не найдены.")

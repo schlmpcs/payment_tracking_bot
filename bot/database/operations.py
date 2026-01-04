@@ -378,7 +378,7 @@ class Database:
             return None
 
     async def get_all_groups(self) -> List[Group]:
-        """Get all payment groups"""
+        """Get all payment groups ordered by display_id"""
         if not self.pool:
             return []
 
@@ -390,6 +390,21 @@ class Database:
                 return [Group(*row) for row in rows]
         except Exception as e:
             self.logger.error(f"Failed to get groups: {e}")
+            return []
+
+    async def get_all_groups_for_statistics(self) -> List[Group]:
+        """Get all payment groups ordered by payment day, then display_id"""
+        if not self.pool:
+            return []
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT group_id, group_name, display_id, payment_day_of_month, next_payment_date, created_at FROM groups ORDER BY payment_day_of_month ASC, display_id ASC"
+                )
+                return [Group(*row) for row in rows]
+        except Exception as e:
+            self.logger.error(f"Failed to get groups for statistics: {e}")
             return []
 
     async def get_group_by_name(self, group_name: str) -> Optional[Group]:
