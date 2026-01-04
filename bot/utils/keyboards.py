@@ -121,3 +121,70 @@ def get_pagination_keyboard(
         )
     
     return builder.as_markup()
+
+
+def get_statistics_pagination_keyboard(
+    current_page: int, 
+    total_pages: int, 
+    order_by: str
+) -> InlineKeyboardMarkup:
+    """
+    Create enhanced pagination keyboard for statistics with jump-by-4 buttons
+    
+    Args:
+        current_page: Current page number (0-indexed)
+        total_pages: Total number of pages
+        order_by: Ordering type ('id' or 'date')
+    
+    Returns:
+        InlineKeyboardMarkup with navigation and jump buttons
+    """
+    builder = InlineKeyboardBuilder()
+    
+    # First row: Jump back by 4, Previous
+    first_row = []
+    if current_page >= 4:
+        first_row.append(InlineKeyboardButton(
+            text="⏪ -4", 
+            callback_data=f"admin_stats_page_{order_by}_{current_page - 4}"
+        ))
+    if current_page > 0:
+        first_row.append(InlineKeyboardButton(
+            text="⬅️ Назад", 
+            callback_data=f"admin_stats_page_{order_by}_{current_page - 1}"
+        ))
+    
+    if first_row:
+        builder.row(*first_row)
+    
+    # Second row: Page indicator
+    builder.row(InlineKeyboardButton(
+        text=f"📄 {current_page + 1}/{total_pages}",
+        callback_data="noop"
+    ))
+    
+    # Third row: Next, Jump forward by 4
+    third_row = []
+    if current_page < total_pages - 1:
+        third_row.append(InlineKeyboardButton(
+            text="Вперёд ➡️", 
+            callback_data=f"admin_stats_page_{order_by}_{current_page + 1}"
+        ))
+    if current_page + 4 < total_pages:
+        third_row.append(InlineKeyboardButton(
+            text="+4 ⏩", 
+            callback_data=f"admin_stats_page_{order_by}_{current_page + 4}"
+        ))
+    
+    if third_row:
+        builder.row(*third_row)
+    
+    # Back to menu button
+    builder.row(
+        InlineKeyboardButton(
+            text="🔙 Главное меню", 
+            callback_data="back_to_admin_menu"
+        )
+    )
+    
+    return builder.as_markup()

@@ -11,6 +11,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.enums import ChatType
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
 
 from bot.database.operations import Database
 from bot.config.settings import Settings
@@ -737,25 +738,66 @@ async def update_due_date_finish(message: types.Message, state: FSMContext):
 
 @admin_router.callback_query(F.data == "admin_stats")
 async def view_statistics(callback: types.CallbackQuery):
-    """View detailed statistics with all payment groups and members - page 0"""
-    await view_statistics_page(callback, page=0)
+    """Show ordering selection for statistics"""
+    user_id = callback.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+
+    # Create ordering selection keyboard
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📋 По ID (001, 002, ...)", callback_data="admin_stats_order_id")
+    builder.button(text="📅 По дате платежа (01-28)", callback_data="admin_stats_order_date")
+    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        "📈 <b>Статистика - Выберите порядок сортировки:</b>\n\n"
+        "📋 <b>По ID</b> - группы будут отсортированы по их идентификатору (001, 002, 003, ...)\n\n"
+        "📅 <b>По дате платежа</b> - группы будут отсортированы по дню оплаты в месяце (01-28), затем по ID",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data == "admin_stats_order_id")
+async def view_statistics_by_id(callback: types.CallbackQuery):
+    """View statistics ordered by ID - page 0"""
+    await view_statistics_page(callback, page=0, order_by="id")
+
+
+@admin_router.callback_query(F.data == "admin_stats_order_date")
+async def view_statistics_by_date(callback: types.CallbackQuery):
+    """View statistics ordered by payment date - page 0"""
+    await view_statistics_page(callback, page=0, order_by="date")
 
 
 @admin_router.callback_query(F.data.startswith("admin_stats_page_"))
 async def view_statistics_page_handler(callback: types.CallbackQuery):
     """Handle pagination for statistics"""
-    page = int(callback.data.split("_")[-1])
-    await view_statistics_page(callback, page)
+    # Format: admin_stats_page_{order}_{page}
+    parts = callback.data.split("_")
+    order_by = parts[3]  # 'id' or 'date'
+    page = int(parts[4])
+    await view_statistics_page(callback, page, order_by)
 
 
-async def view_statistics_page(callback: types.CallbackQuery, page: int = 0):
+async def view_statistics_page(callback: types.CallbackQuery, page: int = 0, order_by: str = "date"):
     """View detailed statistics with all payment groups and members"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
         await callback.answer("Доступ запрещён", show_alert=True)
         return
 
-    groups = await db.get_all_groups_for_statistics()
+    # Get groups with selected ordering
+    if order_by == "id":
+        groups = await db.get_all_groups()
+        order_text = "по ID"
+    else:  # date
+        groups = await db.get_all_groups_for_statistics()
+        order_text = "по дате платежа"
 
     if not groups:
         await callback.message.edit_text("📭 Группы оплаты не найдены.")
@@ -776,7 +818,7 @@ async def view_statistics_page(callback: types.CallbackQuery, page: int = 0):
     end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
     page_groups = groups[start_idx:end_idx]
 
-    response = f"📈 <b>Статистика - Все группы оплаты с участниками (стр. {page + 1}/{total_pages}):</b>\n\n"
+    response = f"📈 <b>Статистика ({order_text}) - Все группы оплаты с участниками (стр. {page + 1}/{total_pages}):</b>\n\n"
 
     for group in page_groups:
         # Get members for this group
@@ -830,10 +872,10 @@ async def view_statistics_page(callback: types.CallbackQuery, page: int = 0):
 
         response += "\n"
 
-    # Add pagination keyboard
-    keyboard = get_pagination_keyboard(
-        page, total_pages, "admin_stats", show_back=True)
-
+    # Add enhanced pagination keyboard with jump-by-4 buttons
+    from bot.utils.keyboards import get_statistics_pagination_keyboard
+    keyboard = get_statistics_pagination_keyboard(page, total_pages, order_by)
+    
     await callback.message.edit_text(response, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
 
