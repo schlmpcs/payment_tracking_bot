@@ -496,12 +496,13 @@ class Database:
 
     # User-Group associations
     async def add_user_to_group(self, user_id: int, group_id: int) -> bool:
-        """Add user to a payment group"""
+        """Add user to a payment group and create initial 'phantom' payment to set next_payment_date"""
         if not self.pool:
             return False
 
         try:
             async with self.pool.acquire() as conn:
+                # Add user to group
                 await conn.execute(
                     """
                     INSERT INTO user_groups (user_id, group_id) 
@@ -510,6 +511,55 @@ class Database:
                     """,
                     user_id, group_id
                 )
+                
+                # Get group's payment day
+                payment_day = await conn.fetchval(
+                    "SELECT payment_day_of_month FROM groups WHERE group_id = $1",
+                    group_id
+                )
+                
+                if payment_day is None:
+                    self.logger.error(f"Group {group_id} not found")
+                    return False
+                
+                # Calculate initial next_payment_date based on join date
+                # Logic: if joining within 3 days after payment_day, set to current month
+                # Otherwise, set to next month
+                from bot.utils.helpers import add_months_to_date
+                current_time = get_now()
+                current_day = current_time.day
+                
+                # Determine which month the first payment should be
+                if current_day <= payment_day + 2:
+                    # Joining within grace period (on or within 2 days after payment day)
+                    # Set payment to current month
+                    next_payment_date = current_time.replace(day=payment_day)
+                else:
+                    # Joining after grace period - set payment to next month
+                    next_payment_date = add_months_to_date(current_time, 1, payment_day)
+                
+                # Create phantom payment with 0 months to establish next_payment_date
+                # Check if phantom payment already exists
+                existing_payment = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM payments 
+                    WHERE user_id = $1 AND group_id = $2
+                    """,
+                    user_id, group_id
+                )
+                
+                if existing_payment == 0:
+                    # Create phantom payment
+                    await conn.execute(
+                        """
+                        INSERT INTO payments (user_id, group_id, months_paid, payment_date, next_payment_date, receipt_file_id)
+                        VALUES ($1, $2, 0, $3, $4, NULL)
+                        """,
+                        user_id, group_id, current_time, next_payment_date
+                    )
+                    self.logger.info(
+                        f"Created phantom payment for user {user_id} in group {group_id}, next payment: {next_payment_date}")
+                
                 return True
         except Exception as e:
             self.logger.error(
@@ -617,12 +667,9 @@ class Database:
                         g.group_name,
                         g.display_id as group_display_id,
                         g.payment_day_of_month,
-                        COALESCE(
-                            (SELECT next_payment_date FROM payments 
-                             WHERE user_id = ug.user_id AND group_id = g.group_id 
-                             ORDER BY payment_date DESC LIMIT 1),
-                            NULL
-                        ) as next_payment_date_from_payments,
+                        (SELECT next_payment_date FROM payments 
+                         WHERE user_id = ug.user_id AND group_id = g.group_id 
+                         ORDER BY payment_date DESC LIMIT 1) as next_payment_date,
                         (SELECT payment_date FROM payments 
                          WHERE user_id = ug.user_id AND group_id = g.group_id 
                          ORDER BY payment_date DESC LIMIT 1) as last_payment_date
@@ -637,12 +684,12 @@ class Database:
                 if not row:
                     return None
 
-                # Calculate next payment date
-                if row['next_payment_date_from_payments']:
-                    # User has made payments, use that date
-                    next_payment = row['next_payment_date_from_payments']
-                else:
-                    # User hasn't paid yet - set initial payment based on join date
+                # Get next payment date from the most recent payment record
+                # (which includes phantom payment set when user joined)
+                next_payment = row['next_payment_date']
+                
+                if not next_payment:
+                    # Fallback for users who joined before phantom payment implementation
                     from bot.utils.helpers import add_months_to_date
                     current_time = get_now()
                     payment_day = row['payment_day_of_month']
@@ -704,6 +751,7 @@ class Database:
                         g.group_id,
                         g.group_name,
                         g.display_id as group_display_id,
+                        g.payment_day_of_month,
                         COALESCE(
                             (SELECT next_payment_date FROM payments 
                              WHERE user_id = ug.user_id AND group_id = g.group_id 
@@ -730,6 +778,7 @@ class Database:
                 result = []
                 for row in rows:
                     next_payment = row['next_payment_date']
+                    
                     # Convert datetime to date if needed
                     if isinstance(next_payment, datetime):
                         next_payment_date = next_payment.date()
@@ -771,6 +820,7 @@ class Database:
                         g.group_id,
                         g.group_name,
                         g.display_id as group_display_id,
+                        g.payment_day_of_month,
                         COALESCE(
                             (SELECT next_payment_date FROM payments 
                              WHERE user_id = ug.user_id AND group_id = g.group_id 
@@ -798,6 +848,7 @@ class Database:
 
                 for row in rows:
                     next_payment = row['next_payment_date']
+                        
                     # Convert datetime to date if needed
                     if isinstance(next_payment, datetime):
                         next_payment_date = next_payment.date()
@@ -845,6 +896,7 @@ class Database:
                         g.group_id,
                         g.group_name,
                         g.display_id as group_display_id,
+                        g.payment_day_of_month,
                         COALESCE(
                             (SELECT next_payment_date FROM payments 
                              WHERE user_id = ug.user_id AND group_id = g.group_id 
@@ -871,6 +923,7 @@ class Database:
                 result = []
                 for row in rows:
                     next_payment = row['next_payment_date']
+                        
                     if isinstance(next_payment, datetime):
                         next_payment = next_payment.date()
                     days_diff = (get_now().date() - next_payment).days
@@ -898,6 +951,7 @@ class Database:
         except Exception as e:
             self.logger.error(
                 f"Failed to get users overdue for admin warning: {e}")
+            return []
             return []
 
     async def is_user_registered(self, user_id: int) -> bool:
@@ -1066,7 +1120,7 @@ class Database:
                            g.payment_day_of_month,
                            (SELECT next_payment_date FROM payments 
                             WHERE user_id = u.user_id AND group_id = $1 
-                            ORDER BY payment_date DESC LIMIT 1) as next_payment_date_from_payments
+                            ORDER BY payment_date DESC LIMIT 1) as next_payment_date
                     FROM users u
                     JOIN user_groups ug ON u.user_id = ug.user_id
                     JOIN groups g ON ug.group_id = g.group_id
@@ -1083,33 +1137,31 @@ class Database:
                 current_time = get_now()
                 members = []
                 for row in rows:
-                    # Calculate next payment date
-                    if row['next_payment_date_from_payments']:
-                        # User has made payments, use that date
-                        next_payment = row['next_payment_date_from_payments']
-                    else:
-                        # User hasn't paid yet - set initial payment based on join date
+                    next_payment = row['next_payment_date']
+                    
+                    if not next_payment:
+                        # Fallback for users who joined before phantom payment implementation
                         payment_day = row['payment_day_of_month']
 
                         # If joining within 2 days after payment day, set to current month
                         # Otherwise, set to next month
                         if current_time.day <= payment_day + 2:
                             # Within grace period - payment due this month
-                            next_payment = current_time.replace(
-                                day=payment_day)
+                            next_payment = current_time.replace(day=payment_day)
                         else:
                             # Past grace period - payment due next month
                             next_payment = add_months_to_date(
                                 current_time, 1, payment_day)
+                    
+                    if next_payment:
+                        # Convert datetime to date for comparison
+                        if isinstance(next_payment, datetime):
+                            next_payment_date = next_payment.date()
+                        else:
+                            next_payment_date = next_payment
 
-                    # Convert datetime to date for comparison
-                    if isinstance(next_payment, datetime):
-                        next_payment_date = next_payment.date()
-                    else:
-                        next_payment_date = next_payment
-
-                    # User is overdue if payment date has arrived (including today)
-                    is_overdue = next_payment_date <= today
+                        # User is overdue if payment date has arrived (including today)
+                        is_overdue = next_payment_date <= today
 
                     members.append({
                         'user_id': row['user_id'],
