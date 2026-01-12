@@ -626,7 +626,9 @@ async def handle_months_selection(callback: types.CallbackQuery, state: FSMConte
     await callback.message.edit_text(
         f"✅ Вы выбрали **{months} месяц{'ев' if months > 1 else ''}**\n\n"
         f"💰 **Нужно оплатить:** {amount} ₸\n\n"
-        f"📎 Пожалуйста, загрузите чек об оплате\n\n"
+        f"� **Оплата на Kaspi Bank:**\n\n"
+        f"{settings.bot_payment_link}\n\n"
+        f"�📎 Пожалуйста, загрузите чек об оплате\n\n"
         f"💡 Поддерживаемые форматы: JPG, PNG, PDF\n"
         f"После загрузки ваш платёж будет обработан автоматически.\n\n"
         f"💡 *Используйте /start для отмены операции*",
