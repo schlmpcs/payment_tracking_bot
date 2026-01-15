@@ -833,12 +833,12 @@ class Database:
                     FROM user_groups ug
                     JOIN groups g ON ug.group_id = g.group_id
                     JOIN users u ON ug.user_id = u.user_id
-                    WHERE COALESCE(
+                    WHERE DATE(COALESCE(
                         (SELECT next_payment_date FROM payments 
                          WHERE user_id = ug.user_id AND group_id = g.group_id 
                          ORDER BY payment_date DESC LIMIT 1),
                         g.next_payment_date
-                    ) BETWEEN CURRENT_DATE - INTERVAL '2 days' AND CURRENT_DATE
+                    )) BETWEEN CURRENT_DATE - INTERVAL '2 days' AND CURRENT_DATE
                     ORDER BY next_payment_date
                     """
                 )

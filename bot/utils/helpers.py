@@ -145,6 +145,14 @@ def validate_file_type(mime_type: str) -> bool:
         'image/jpeg',
         'image/png',
         'image/jpg',
-        'application/pdf'
+        'application/pdf',
+        'application/x-pdf',
+        'application/acrobat',
+        'application/x-download',
+        'application/octet-stream'
     ]
-    return mime_type in allowed_types
+
+    if mime_type in allowed_types:
+        return True
+
+    return False

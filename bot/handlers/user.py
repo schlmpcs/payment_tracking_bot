@@ -659,6 +659,11 @@ async def handle_document_receipt(message: types.Message, state: FSMContext):
     document = message.document
 
     if not validate_file_type(document.mime_type):
+        # Log the rejected MIME type for debugging
+        logger.warning(
+            f"Rejected file upload from user {message.from_user.id}: "
+            f"mime_type='{document.mime_type}', file_name='{document.file_name}'"
+        )
         await message.answer(
             "❌ Неподдерживаемый тип файла. Пожалуйста, загрузите:\n"
             "• Фотографию (JPG, PNG)\n"
