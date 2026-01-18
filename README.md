@@ -1,6 +1,6 @@
-# Modern Spotify Family Payment Bot
+# Payment tracking bot
 
-A Telegram bot for managing Spotify family subscription payments with receipt uploads and automatic tracking.
+A Telegram bot for managing subscription payments with receipt uploads and automatic tracking.
 
 ## 🚀 Features
 
@@ -21,7 +21,7 @@ A Telegram bot for managing Spotify family subscription payments with receipt up
 1. **Clone and Install:**
    ```bash
    git clone <repository>
-   cd spotify_family_automatization
+   cd folder_name
    pip install -r requirements.txt
    ```
 
