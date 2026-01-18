@@ -12,7 +12,7 @@ from aiogram.enums import ChatType
 from bot.database.operations import Database
 from bot.config.settings import Settings
 from bot.utils.states import PaymentStates, JoinStates
-from bot.utils.keyboards import get_months_keyboard, get_user_main_menu
+from bot.utils.keyboards import get_months_keyboard, get_user_main_menu, get_unregistered_user_menu
 from bot.utils.helpers import (
     format_date, calculate_days_until,
     get_payment_status_emoji, get_payment_status_text,
@@ -99,7 +99,11 @@ async def start_command(message: types.Message, state: FSMContext):
             f"Пожалуйста, попробуйте позже."
         )
 
-    await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_user_main_menu())
+    # Use different menu based on registration status
+    if db and db.pool and not await db.is_user_registered(message.from_user.id):
+        await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_unregistered_user_menu())
+    else:
+        await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_user_main_menu())
 
 
 # Callback handlers for user menu buttons
@@ -232,6 +236,57 @@ async def handle_user_help(callback: types.CallbackQuery):
     )
 
     await callback.message.answer(help_text, parse_mode="HTML", reply_markup=get_user_main_menu())
+    await callback.answer()
+
+
+@user_router.callback_query(F.data == "user_join")
+async def handle_user_join(callback: types.CallbackQuery, state: FSMContext):
+    """Handle Join button from menu - redirect to join flow"""
+    if not db or not db.pool:
+        await callback.message.answer(
+            "❌ База данных в настоящее время недоступна.\n"
+            "Пожалуйста, попробуйте позже."
+        )
+        await callback.answer()
+        return
+
+    user_id = callback.from_user.id
+
+    # Check if user is already registered
+    if await db.is_user_registered(user_id):
+        await callback.message.answer(
+            "✅ Вы уже зарегистрированы в группе!\n"
+            "Используйте /status для проверки вашего текущего статуса.",
+            reply_markup=get_user_main_menu()
+        )
+        await callback.answer()
+        return
+
+    # Start join process - show available groups
+    groups = await db.get_all_groups()
+    
+    if not groups:
+        await callback.message.answer(
+            "📭 Нет доступных групп для присоединения.\n"
+            "Пожалуйста, обратитесь к администратору.",
+            reply_markup=get_unregistered_user_menu()
+        )
+        await callback.answer()
+        return
+
+    group_list = "\n".join([
+        f"• <b>{g.group_name}</b> (ID: {g.display_id})"
+        for g in groups[:10]
+    ])
+
+    await callback.message.answer(
+        f"🚪 <b>Присоединение к группе</b>\n\n"
+        f"Доступные группы:\n{group_list}\n\n"
+        f"📝 Введите <b>ID группы</b> (например: 001 или 101):",
+        parse_mode="HTML"
+    )
+
+    await state.set_state(JoinStates.selecting_group)
     await callback.answer()
 
 

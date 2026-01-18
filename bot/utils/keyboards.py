@@ -71,6 +71,20 @@ def get_user_main_menu() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_unregistered_user_menu() -> InlineKeyboardMarkup:
+    """Create menu keyboard for unregistered users with Join button"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="🚪 Присоединиться", callback_data="user_join")
+    )
+    builder.row(
+        InlineKeyboardButton(text="❓ Помощь", callback_data="user_help")
+    )
+    
+    return builder.as_markup()
+
+
 def get_pagination_keyboard(
     current_page: int, 
     total_pages: int, 
