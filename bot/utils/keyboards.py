@@ -27,8 +27,11 @@ def get_admin_main_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     builder.row(
-        InlineKeyboardButton(text="👥 Просмотр групп", callback_data="admin_view_groups"),
-        InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats")
+        InlineKeyboardButton(text="👥 Просмотр групп", callback_data="admin_view_groups")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📈 Статистика 🇰🇿", callback_data="admin_stats_kz"),
+        InlineKeyboardButton(text="📈 Статистика 🇷🇺", callback_data="admin_stats_ru")
     )
     builder.row(
         InlineKeyboardButton(text="➕ Создать группу", callback_data="admin_create_group"),
@@ -126,7 +129,8 @@ def get_pagination_keyboard(
 def get_statistics_pagination_keyboard(
     current_page: int, 
     total_pages: int, 
-    order_by: str
+    order_by: str,
+    region: str = None
 ) -> InlineKeyboardMarkup:
     """
     Create enhanced pagination keyboard for statistics with jump-by-4 buttons
@@ -135,23 +139,30 @@ def get_statistics_pagination_keyboard(
         current_page: Current page number (0-indexed)
         total_pages: Total number of pages
         order_by: Ordering type ('id' or 'date')
+        region: Region filter ('kz', 'ru', or None for all)
     
     Returns:
         InlineKeyboardMarkup with navigation and jump buttons
     """
     builder = InlineKeyboardBuilder()
     
+    # Build callback data prefix based on region
+    if region:
+        callback_prefix = f"admin_stats_page_{region}_{order_by}"
+    else:
+        callback_prefix = f"admin_stats_page_{order_by}"
+    
     # First row: Jump back by 4, Previous
     first_row = []
     if current_page >= 4:
         first_row.append(InlineKeyboardButton(
             text="⏪ -4", 
-            callback_data=f"admin_stats_page_{order_by}_{current_page - 4}"
+            callback_data=f"{callback_prefix}_{current_page - 4}"
         ))
     if current_page > 0:
         first_row.append(InlineKeyboardButton(
             text="⬅️ Назад", 
-            callback_data=f"admin_stats_page_{order_by}_{current_page - 1}"
+            callback_data=f"{callback_prefix}_{current_page - 1}"
         ))
     
     if first_row:
@@ -168,12 +179,12 @@ def get_statistics_pagination_keyboard(
     if current_page < total_pages - 1:
         third_row.append(InlineKeyboardButton(
             text="Вперёд ➡️", 
-            callback_data=f"admin_stats_page_{order_by}_{current_page + 1}"
+            callback_data=f"{callback_prefix}_{current_page + 1}"
         ))
     if current_page + 4 < total_pages:
         third_row.append(InlineKeyboardButton(
             text="+4 ⏩", 
-            callback_data=f"admin_stats_page_{order_by}_{current_page + 4}"
+            callback_data=f"{callback_prefix}_{current_page + 4}"
         ))
     
     if third_row:

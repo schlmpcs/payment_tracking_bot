@@ -156,3 +156,67 @@ def validate_file_type(mime_type: str) -> bool:
         return True
 
     return False
+
+
+def get_region_from_group_id(display_id: str) -> str:
+    """Get region code based on group display ID.
+    
+    - Groups starting with '0' -> 'kz' (Kazakhstan)
+    - Groups starting with '1' -> 'ru' (Russia)
+    
+    Args:
+        display_id: Group display ID (e.g., '001', '101')
+        
+    Returns:
+        'kz' for Kazakhstan, 'ru' for Russia
+    """
+    if display_id and str(display_id).startswith('1'):
+        return 'ru'
+    return 'kz'
+
+
+def get_currency_symbol(region: str) -> str:
+    """Get currency symbol for region.
+    
+    Args:
+        region: 'kz' or 'ru'
+        
+    Returns:
+        '₸' for Kazakhstan, '₽' for Russia
+    """
+    return '₽' if region == 'ru' else '₸'
+
+
+def get_payment_info(region: str, settings: Settings) -> dict:
+    """Get payment info for a region.
+    
+    Args:
+        region: 'kz' or 'ru'
+        settings: Settings instance
+        
+    Returns:
+        dict with:
+        - price: float
+        - currency: str
+        - payment_text: str (formatted payment instructions in HTML)
+    """
+    if region == 'ru':
+        return {
+            'price': settings.bot_ru_payment_price,
+            'currency': '₽',
+            'payment_text': (
+                f"💳 <b>Перевод на карту:</b>\n\n"
+                f"🏦 Банк: {settings.bot_ru_payment_bank}\n"
+                f"💳 Карта: <code>{settings.bot_ru_payment_card}</code>\n"
+                f"👤 Получатель: {settings.bot_ru_payment_recipient}"
+            )
+        }
+    else:
+        return {
+            'price': settings.bot_default_payment_price,
+            'currency': '₸',
+            'payment_text': (
+                f"💳 <b>Оплата на Kaspi Bank:</b>\n\n"
+                f"{settings.bot_payment_link}"
+            )
+        }

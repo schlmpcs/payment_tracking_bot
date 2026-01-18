@@ -10,7 +10,7 @@ from aiogram import Bot
 
 from bot.config.settings import Settings
 from bot.database.operations import Database
-from bot.utils.helpers import format_date, get_now, format_datetime
+from bot.utils.helpers import format_date, get_now, format_datetime, get_region_from_group_id, get_payment_info
 from bot.utils.keyboards import get_user_main_menu
 
 
@@ -118,6 +118,13 @@ class NotificationScheduler:
 
                 days_overdue = (today - payment_date).days
 
+                # Get regional payment info based on user's group
+                region = get_region_from_group_id(status.group_display_id)
+                payment_info = get_payment_info(region, self.settings)
+                price = payment_info['price']
+                currency = payment_info['currency']
+                payment_text = payment_info['payment_text']
+
                 # Generate appropriate message based on days overdue
                 if days_overdue == 0:
                     # Payment due TODAY
@@ -125,9 +132,8 @@ class NotificationScheduler:
                         f"⏰ <b>НАПОМИНАНИЕ ОБ ОПЛАТЕ</b>\n\n"
                         f"🔴 Ваш платёж за Spotify для группы <b>{status.group_name}</b> должен быть совершён <b>СЕГОДНЯ</b>!\n\n"
                         f"📅 <b>Дата платежа:</b> {format_date(status.next_payment_date)}\n"
-                        f"💰 <b>Сумма:</b> {self.settings.bot_default_payment_price} ₸\n\n"
-                        f"💳 <b>Оплата на Kaspi Bank:</b>\n\n"
-                        f"{self.settings.bot_payment_link}\n\n"
+                        f"💰 <b>Сумма:</b> {price} {currency}\n\n"
+                        f"{payment_text}\n\n"
                         f"💡 <b>Для оплаты:</b> Используйте команду /pay и загрузите чек\n"
                         f"📊 <b>Проверить статус:</b> Используйте команду /status\n\n"
                         f"⚠️ Пожалуйста, совершите платёж сегодня, чтобы сохранить доступ к Spotify!"
@@ -138,9 +144,8 @@ class NotificationScheduler:
                         f"⚠️ <b>ПЛАТЁЖ ПРОСРОЧЕН</b>\n\n"
                         f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>1 день</b>.\n\n"
                         f"📅 <b>Срок был:</b> {format_date(status.next_payment_date)}\n"
-                        f"💰 <b>Сумма:</b> {self.settings.bot_default_payment_price} ₸\n\n"
-                        f"💳 <b>Оплата на Kaspi Bank:</b>\n\n"
-                        f"{self.settings.bot_payment_link}\n\n"
+                        f"💰 <b>Сумма:</b> {price} {currency}\n\n"
+                        f"{payment_text}\n\n"
                         f"💡 <b>Для оплаты:</b> Используйте команду /pay и загрузите чек\n"
                         f"📊 <b>Проверить статус:</b> Используйте команду /status\n\n"
                         f"🚨 Пожалуйста, оплатите как можно скорее, чтобы избежать отключения!"
@@ -148,16 +153,15 @@ class NotificationScheduler:
                 elif days_overdue == 2:
                     # 2 days overdue - FINAL REMINDER
                     reminder_text = (
-                        f"🚨 <b>ПОСЛЕДНЕЕ ПРЕДУПРЕЖДЕНИЕ</b>\n\n"
+                        f"🚨 <b>ПЛАТЁЖ ПРОСРОЧЕН</b>\n\n"
                         f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>2 дня</b>!\n\n"
                         f"📅 <b>Срок был:</b> {format_date(status.next_payment_date)}\n"
-                        f"💰 <b>Сумма:</b> {self.settings.bot_default_payment_price} ₸\n\n"
-                        f"💳 <b>Оплата на Kaspi Bank:</b>\n\n"
-                        f"{self.settings.bot_payment_link}\n\n"
+                        f"💰 <b>Сумма:</b> {price} {currency}\n\n"
+                        f"{payment_text}\n\n"
                         f"💡 <b>Для оплаты:</b> Используйте команду /pay и загрузите чек\n\n"
                         f"⛔ <b>ВНИМАНИЕ:</b> Если оплата не будет получена завтра, администратор будет уведомлён, "
                         f"и вы можете быть удалены из группы!\n\n"
-                        f"🆘 Оплатите СРОЧНО!"
+                        f"🆘 Пожалуйста, совершите платёж сегодня, чтобы сохранить доступ к Spotify!"
                     )
                 elif days_overdue == 3:
                      # 3 days overdue - CRITICAL
@@ -165,12 +169,10 @@ class NotificationScheduler:
                         f"❌ <b>КРИТИЧЕСКАЯ СИТУАЦИЯ</b>\n\n"
                         f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>3 дня</b>.\n\n"
                         f"📅 <b>Срок был:</b> {format_date(status.next_payment_date)}\n"
-                        f"💰 <b>Сумма:</b> {self.settings.bot_default_payment_price} ₸\n\n"
-                        f"💳 <b>Оплата на Kaspi Bank:</b>\n\n"
-                        f"{self.settings.bot_payment_link}\n\n"
+                        f"💰 <b>Сумма:</b> {price} {currency}\n\n"
+                        f"{payment_text}\n\n"
                         f"⚠️ <b>Администратор был уведомлён о вашей задолженности.</b>\n"
-                        f"Вы рискуете быть удалённым из группы в любой момент.\n\n"
-                        f"🆘 <b>ПОЖАЛУЙСТА, ОПЛАТИТЕ НЕМЕДЛЕННО!</b>"
+                        f"🆘 <b>Пожалуйста, совершите платёж сегодня, чтобы сохранить доступ к Spotify!</b>"
                     )
                 else:
                     # Skip if outside 0-3 range (shouldn't happen with query filter)

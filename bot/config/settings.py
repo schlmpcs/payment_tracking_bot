@@ -59,6 +59,20 @@ class Settings(BaseSettings):
         description="Payment link for Kaspi Bank or other payment system"
     )
 
+    # Russia payment settings
+    bot_ru_payment_price: float = Field(
+        200, description="Monthly payment amount for Russia (in rubles)"
+    )
+    bot_ru_payment_card: str = Field(
+        "", description="Card number for Russia payments"
+    )
+    bot_ru_payment_bank: str = Field(
+        "VTB Bank", description="Bank name for Russia payments"
+    )
+    bot_ru_payment_recipient: str = Field(
+        "", description="Recipient name for Russia card transfers"
+    )
+
     @property
     def database_dsn(self) -> str:
         """Build database connection string"""

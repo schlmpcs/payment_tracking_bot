@@ -20,7 +20,7 @@ from bot.utils.keyboards import get_admin_main_keyboard, get_confirmation_keyboa
 from bot.utils.helpers import (
     format_date, calculate_days_until,
     get_payment_status_emoji, get_payment_status_text,
-    is_admin, get_now, format_datetime
+    is_admin, get_now, format_datetime, get_region_from_group_id
 )
 
 # Initialize router
@@ -736,9 +736,62 @@ async def update_due_date_finish(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+@admin_router.callback_query(F.data == "admin_stats_kz")
+async def view_statistics_kz(callback: types.CallbackQuery):
+    """Show ordering selection for Kazakhstan statistics"""
+    user_id = callback.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+
+    # Create ordering selection keyboard for KZ
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📋 По ID (001, 002, ...)", callback_data="admin_stats_kz_order_id")
+    builder.button(text="📅 По дате платежа (01-28)", callback_data="admin_stats_kz_order_date")
+    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        "📈 <b>Статистика 🇰🇿 Казахстан - Выберите порядок сортировки:</b>\n\n"
+        "📋 <b>По ID</b> - группы будут отсортированы по их идентификатору (001, 002, 003, ...)\n\n"
+        "📅 <b>По дате платежа</b> - группы будут отсортированы по дню оплаты в месяце (01-28), затем по ID",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data == "admin_stats_ru")
+async def view_statistics_ru(callback: types.CallbackQuery):
+    """Show ordering selection for Russia statistics"""
+    user_id = callback.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+
+    # Create ordering selection keyboard for RU
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📋 По ID (101, 102, ...)", callback_data="admin_stats_ru_order_id")
+    builder.button(text="📅 По дате платежа (01-28)", callback_data="admin_stats_ru_order_date")
+    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        "📈 <b>Статистика 🇷🇺 Россия - Выберите порядок сортировки:</b>\n\n"
+        "📋 <b>По ID</b> - группы будут отсортированы по их идентификатору (101, 102, 103, ...)\n\n"
+        "📅 <b>По дате платежа</b> - группы будут отсортированы по дню оплаты в месяце (01-28), затем по ID",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# Keep old handler for backward compatibility
 @admin_router.callback_query(F.data == "admin_stats")
 async def view_statistics(callback: types.CallbackQuery):
-    """Show ordering selection for statistics"""
+    """Show ordering selection for statistics (all regions)"""
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
         await callback.answer("Доступ запрещён", show_alert=True)
@@ -774,18 +827,59 @@ async def view_statistics_by_date(callback: types.CallbackQuery):
     await view_statistics_page(callback, page=0, order_by="date")
 
 
+# Kazakhstan regional stats handlers
+@admin_router.callback_query(F.data == "admin_stats_kz_order_id")
+async def view_statistics_kz_by_id(callback: types.CallbackQuery):
+    """View KZ statistics ordered by ID - page 0"""
+    await view_statistics_page(callback, page=0, order_by="id", region="kz")
+
+
+@admin_router.callback_query(F.data == "admin_stats_kz_order_date")
+async def view_statistics_kz_by_date(callback: types.CallbackQuery):
+    """View KZ statistics ordered by payment date - page 0"""
+    await view_statistics_page(callback, page=0, order_by="date", region="kz")
+
+
+# Russia regional stats handlers
+@admin_router.callback_query(F.data == "admin_stats_ru_order_id")
+async def view_statistics_ru_by_id(callback: types.CallbackQuery):
+    """View RU statistics ordered by ID - page 0"""
+    await view_statistics_page(callback, page=0, order_by="id", region="ru")
+
+
+@admin_router.callback_query(F.data == "admin_stats_ru_order_date")
+async def view_statistics_ru_by_date(callback: types.CallbackQuery):
+    """View RU statistics ordered by payment date - page 0"""
+    await view_statistics_page(callback, page=0, order_by="date", region="ru")
+
+
 @admin_router.callback_query(F.data.startswith("admin_stats_page_"))
 async def view_statistics_page_handler(callback: types.CallbackQuery):
     """Handle pagination for statistics"""
-    # Format: admin_stats_page_{order}_{page}
+    # Format: admin_stats_page_{order}_{page} or admin_stats_page_{region}_{order}_{page}
     parts = callback.data.split("_")
-    order_by = parts[3]  # 'id' or 'date'
-    page = int(parts[4])
-    await view_statistics_page(callback, page, order_by)
+    if len(parts) == 5:
+        # Old format: admin_stats_page_{order}_{page}
+        order_by = parts[3]  # 'id' or 'date'
+        page = int(parts[4])
+        region = None
+    else:
+        # New format: admin_stats_page_{region}_{order}_{page}
+        region = parts[3]  # 'kz' or 'ru'
+        order_by = parts[4]  # 'id' or 'date'
+        page = int(parts[5])
+    await view_statistics_page(callback, page, order_by, region)
 
 
-async def view_statistics_page(callback: types.CallbackQuery, page: int = 0, order_by: str = "date"):
-    """View detailed statistics with all payment groups and members"""
+async def view_statistics_page(callback: types.CallbackQuery, page: int = 0, order_by: str = "date", region: str = None):
+    """View detailed statistics with all payment groups and members
+    
+    Args:
+        callback: Callback query
+        page: Page number
+        order_by: 'id' or 'date'
+        region: 'kz', 'ru', or None for all groups
+    """
     user_id = callback.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
         await callback.answer("Доступ запрещён", show_alert=True)
@@ -799,8 +893,20 @@ async def view_statistics_page(callback: types.CallbackQuery, page: int = 0, ord
         groups = await db.get_all_groups_for_statistics()
         order_text = "по дате платежа"
 
+    # Filter groups by region if specified
+    if region:
+        groups = [g for g in groups if get_region_from_group_id(g.display_id) == region]
+
+    # Determine region title
+    if region == "kz":
+        region_title = "🇰🇿 Казахстан"
+    elif region == "ru":
+        region_title = "🇷🇺 Россия"
+    else:
+        region_title = "Все регионы"
+
     if not groups:
-        await callback.message.edit_text("📭 Группы оплаты не найдены.")
+        await callback.message.edit_text(f"📭 Группы оплаты не найдены для региона {region_title}.")
         return
 
     # Pagination settings
@@ -818,7 +924,7 @@ async def view_statistics_page(callback: types.CallbackQuery, page: int = 0, ord
     end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
     page_groups = groups[start_idx:end_idx]
 
-    response = f"📈 <b>Статистика ({order_text}) - Все группы оплаты с участниками (стр. {page + 1}/{total_pages}):</b>\n\n"
+    response = f"📈 <b>Статистика {region_title} ({order_text}) - Группы с участниками (стр. {page + 1}/{total_pages}):</b>\n\n"
 
     for group in page_groups:
         # Get members for this group
@@ -874,7 +980,7 @@ async def view_statistics_page(callback: types.CallbackQuery, page: int = 0, ord
 
     # Add enhanced pagination keyboard with jump-by-4 buttons
     from bot.utils.keyboards import get_statistics_pagination_keyboard
-    keyboard = get_statistics_pagination_keyboard(page, total_pages, order_by)
+    keyboard = get_statistics_pagination_keyboard(page, total_pages, order_by, region)
     
     await callback.message.edit_text(response, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()

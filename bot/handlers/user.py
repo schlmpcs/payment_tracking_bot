@@ -16,7 +16,8 @@ from bot.utils.keyboards import get_months_keyboard, get_user_main_menu
 from bot.utils.helpers import (
     format_date, calculate_days_until,
     get_payment_status_emoji, get_payment_status_text,
-    validate_file_type, get_now, format_datetime
+    validate_file_type, get_now, format_datetime,
+    get_region_from_group_id, get_payment_info
 )
 
 # Initialize router
@@ -618,22 +619,34 @@ async def pay_command(message: types.Message, state: FSMContext):
 async def handle_months_selection(callback: types.CallbackQuery, state: FSMContext):
     """Handle months selection"""
     months = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
 
     await state.update_data(months=months)
 
+    # Get user's group to determine region
+    status = await db.get_user_payment_status(user_id)
+    if not status:
+        await callback.message.edit_text("❌ Не удалось получить информацию о группе.")
+        await callback.answer()
+        return
+
+    # Get regional payment info
+    region = get_region_from_group_id(status.group_display_id)
+    payment_info = get_payment_info(region, settings)
+    
     # Calculate payment amount
-    amount = months * settings.bot_default_payment_price
+    amount = months * payment_info['price']
+    currency = payment_info['currency']
 
     await callback.message.edit_text(
-        f"✅ Вы выбрали **{months} месяц{'ев' if months > 1 else ''}**\n\n"
-        f"💰 **Нужно оплатить:** {amount} ₸\n\n"
-        f"� **Оплата на Kaspi Bank:**\n\n"
-        f"{settings.bot_payment_link}\n\n"
-        f"�📎 Пожалуйста, загрузите чек об оплате\n\n"
+        f"✅ Вы выбрали <b>{months} месяц{'ев' if months > 1 else ''}</b>\n\n"
+        f"💰 <b>Нужно оплатить:</b> {amount} {currency}\n\n"
+        f"{payment_info['payment_text']}\n\n"
+        f"📎 Пожалуйста, загрузите чек об оплате\n\n"
         f"💡 Поддерживаемые форматы: JPG, PNG, PDF\n"
         f"После загрузки ваш платёж будет обработан автоматически.\n\n"
-        f"💡 *Используйте /start для отмены операции*",
-        parse_mode="Markdown"
+        f"💡 <i>Используйте /start для отмены операции</i>",
+        parse_mode="HTML"
     )
 
     await callback.answer()
