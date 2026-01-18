@@ -280,11 +280,13 @@ async def handle_user_join(callback: types.CallbackQuery, state: FSMContext):
     ])
 
     await callback.message.answer(
-        f"🚪 <b>Присоединение к группе</b>\n\n"
-        f"Доступные группы:\n{group_list}\n\n"
-        f"📝 Введите <b>ID группы</b> (например: 001 или 101):",
+        "🚪 <b>Присоединение к группе</b>\n\n"
+        "Введите ID группы, к которой хотите присоединиться:\n\n"
+        "💡 <b>Пример:</b> 001, 002, 003\n\n"
+        "❌ Отправьте <code>отмена</code> или используйте /start для отмены",
         parse_mode="HTML"
     )
+
 
     await state.set_state(JoinStates.selecting_group)
     await callback.answer()
