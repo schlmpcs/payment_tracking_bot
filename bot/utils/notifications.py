@@ -81,8 +81,11 @@ class NotificationScheduler:
         self.logger.info("🔍 Running daily notification checks...")
 
         try:
-            # Send user reminders (3 days before due date)
+            # Send user reminders (on due date and up to 3 days after)
             await self._send_user_reminders()
+
+            # Send group reminders (to linked Telegram groups)
+            await self._send_group_reminders()
 
             # Send admin warnings (3 days after due date)
             await self._send_admin_warnings()
@@ -154,7 +157,7 @@ class NotificationScheduler:
                     # 2 days overdue - FINAL REMINDER
                     reminder_text = (
                         f"🚨 <b>ПЛАТЁЖ ПРОСРОЧЕН</b>\n\n"
-                        f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>2 дня</b>!\n\n"
+                        f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>23 дня</b>!\n\n"
                         f"📅 <b>Срок был:</b> {format_date(status.next_payment_date)}\n"
                         f"💰 <b>Сумма:</b> {price} {currency}\n\n"
                         f"{payment_text}\n\n"
@@ -166,7 +169,7 @@ class NotificationScheduler:
                 elif days_overdue == 3:
                      # 3 days overdue - CRITICAL
                     reminder_text = (
-                        f"❌ <b>КРИТИЧЕСКАЯ СИТУАЦИЯ</b>\n\n"
+                        f"❌ <b>ПЛАТЁЖ ПРОСРОЧЕН</b>\n\n"
                         f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>3 дня</b>.\n\n"
                         f"📅 <b>Срок был:</b> {format_date(status.next_payment_date)}\n"
                         f"💰 <b>Сумма:</b> {price} {currency}\n\n"
@@ -195,6 +198,70 @@ class NotificationScheduler:
                     f"❌ Не удалось отправить напоминание пользователю {status.user_id}: {e}")
                 # Continue with next user even if one fails
                 continue
+
+    async def _send_group_reminders(self):
+        """Send payment reminders to linked Telegram group chats"""
+        if not self.db or not self.db.pool:
+            return
+
+        # Get all groups with linked Telegram chats
+        groups_with_chats = await self.db.get_groups_with_telegram_chats()
+
+        if not groups_with_chats:
+            self.logger.info("📭 Нет групп с привязанными Telegram-чатами")
+            return
+
+        today = get_now().date()
+        groups_notified = 0
+
+        for group in groups_with_chats:
+            try:
+                # Check if today is payment day for this group
+                payment_date = group['next_payment_date']
+                if hasattr(payment_date, 'date'):
+                    payment_date = payment_date.date()
+
+                # Only send reminder on payment day
+                if payment_date != today:
+                    continue
+
+                # Get regional payment info
+                region = get_region_from_group_id(group['display_id'])
+                payment_info = get_payment_info(region, self.settings)
+                price = payment_info['price']
+                currency = payment_info['currency']
+                payment_text = payment_info['payment_text']
+
+                # Create generic group message
+                reminder_text = (
+                    f"👋 Здравствуйте! Сегодня день оплаты.\n\n"
+                    f"💰 <b>Сумма:</b> {price} {currency}\n\n"
+                    f"{payment_text}\n\n"
+                    f"📎 После оплаты, пожалуйста, отправьте чек боту. Спасибо!"
+                )
+
+                await self.bot.send_message(
+                    chat_id=group['telegram_chat_id'],
+                    text=reminder_text,
+                    parse_mode="HTML"
+                )
+
+                groups_notified += 1
+                self.logger.info(
+                    f"📤 Напоминание отправлено в чат группы '{group['group_name']}' ({group['telegram_chat_id']})")
+                
+                # Small delay between messages
+                await asyncio.sleep(0.5)
+
+            except Exception as e:
+                self.logger.error(
+                    f"❌ Не удалось отправить напоминание в группу '{group['group_name']}': {e}")
+                continue
+
+        if groups_notified > 0:
+            self.logger.info(f"📬 Напоминания отправлены в {groups_notified} групповых чатов")
+        else:
+            self.logger.info("📭 Сегодня нет групп для напоминаний")
 
     async def _send_admin_warnings(self):
         """Send overdue warnings to admins"""

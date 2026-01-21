@@ -33,11 +33,14 @@ class Database:
                 self.logger.info(
                     f"🔄 Database connection attempt {attempt + 1}/{retries}")
 
-                # Configure SSL for Koyeb
-                import ssl
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
+                # Configure SSL based on settings
+                ssl_setting = None
+                if self.settings.db_ssl_mode and self.settings.db_ssl_mode.lower() != 'disable':
+                    import ssl
+                    ssl_context = ssl.create_default_context()
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                    ssl_setting = ssl_context
 
                 self.pool = await asyncpg.create_pool(
                     host=self.settings.db_host,
@@ -45,7 +48,7 @@ class Database:
                     user=self.settings.db_username.get_secret_value(),
                     password=self.settings.db_password.get_secret_value(),
                     database=self.settings.db_database,
-                    ssl=ssl_context,
+                    ssl=ssl_setting,
                     min_size=1,
                     max_size=5,
                     command_timeout=60,
@@ -455,6 +458,82 @@ class Database:
             self.logger.error(
                 f"Failed to update due date for group {group_id}: {e}")
             return False
+
+    async def set_group_telegram_chat(self, group_id: int, telegram_chat_id: int) -> bool:
+        """Link a Telegram group chat to a payment group"""
+        if not self.pool:
+            return False
+
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute(
+                    """
+                    UPDATE groups 
+                    SET telegram_chat_id = $1 
+                    WHERE group_id = $2
+                    """,
+                    telegram_chat_id, group_id
+                )
+
+                rows_affected = int(result.split()[-1])
+                if rows_affected > 0:
+                    self.logger.info(
+                        f"Linked Telegram chat {telegram_chat_id} to group {group_id}")
+                    return True
+                return False
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to set telegram chat for group {group_id}: {e}")
+            return False
+
+    async def get_group_telegram_chat(self, group_id: int) -> Optional[int]:
+        """Get linked Telegram chat ID for a payment group"""
+        if not self.pool:
+            return None
+
+        try:
+            async with self.pool.acquire() as conn:
+                chat_id = await conn.fetchval(
+                    "SELECT telegram_chat_id FROM groups WHERE group_id = $1",
+                    group_id
+                )
+                return chat_id
+        except Exception as e:
+            self.logger.error(
+                f"Failed to get telegram chat for group {group_id}: {e}")
+            return None
+
+    async def get_groups_with_telegram_chats(self) -> List[dict]:
+        """Get all groups that have a linked Telegram chat"""
+        if not self.pool:
+            return []
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT group_id, group_name, display_id, payment_day_of_month, 
+                           next_payment_date, telegram_chat_id
+                    FROM groups 
+                    WHERE telegram_chat_id IS NOT NULL
+                    ORDER BY display_id
+                    """
+                )
+                return [
+                    {
+                        'group_id': row['group_id'],
+                        'group_name': row['group_name'],
+                        'display_id': row['display_id'],
+                        'payment_day_of_month': row['payment_day_of_month'],
+                        'next_payment_date': row['next_payment_date'],
+                        'telegram_chat_id': row['telegram_chat_id']
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            self.logger.error(f"Failed to get groups with telegram chats: {e}")
+            return []
 
     async def get_groups_with_member_count(self) -> List[dict]:
         """Get all groups with member counts for user selection"""

@@ -68,6 +68,75 @@ async def admin_command(message: types.Message, state: FSMContext):
     )
 
 
+@admin_router.message(Command("link_group"))
+async def link_group_command(message: types.Message):
+    """Link current Telegram group chat to a payment group.
+    
+    Usage: /link_group 001
+    Must be run in a Telegram group (not private chat).
+    """
+    # This command should work in group chats, not private
+    if message.chat.type == ChatType.PRIVATE:
+        await message.answer(
+            "❌ Эта команда должна использоваться в групповом чате.\n\n"
+            "📝 <b>Инструкция:</b>\n"
+            "1. Добавьте бота в семейную Telegram-группу\n"
+            "2. Запустите <code>/link_group 001</code> в этой группе\n"
+            "   (замените 001 на ID вашей группы оплаты)",
+            parse_mode="HTML"
+        )
+        return
+
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+
+    # Parse command arguments
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer(
+            "❌ Укажите ID группы оплаты.\n\n"
+            "<b>Пример:</b> <code>/link_group 001</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    group_display_id = args[1].strip()
+    
+    # Find the payment group by display ID
+    group = await db.get_group_by_display_id(group_display_id)
+    if not group:
+        await message.answer(
+            f"❌ Группа оплаты с ID <b>{group_display_id}</b> не найдена.\n\n"
+            "💡 Используйте /admin для просмотра списка групп.",
+            parse_mode="HTML"
+        )
+        return
+
+    # Link this Telegram chat to the payment group
+    telegram_chat_id = message.chat.id
+    success = await db.set_group_telegram_chat(group.group_id, telegram_chat_id)
+
+    if success:
+        await message.answer(
+            f"✅ <b>Группа успешно привязана!</b>\n\n"
+            f"📋 Группа оплаты: <b>{group.group_name}</b>\n"
+            f"💬 Telegram чат: <code>{telegram_chat_id}</code>\n\n"
+            f"🔔 Теперь напоминания об оплате будут отправляться в этот чат.",
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            "❌ Не удалось привязать группу. Попробуйте позже.",
+            parse_mode="HTML"
+        )
+
+
 @admin_router.message(Command("check_notifications"))
 async def check_notifications_command(message: types.Message):
     """Check what notifications would be sent (without actually sending them)"""
