@@ -217,12 +217,14 @@ class NotificationScheduler:
         for group in groups_with_chats:
             try:
                 # Check if today is payment day for this group
-                payment_date = group['next_payment_date']
-                if hasattr(payment_date, 'date'):
-                    payment_date = payment_date.date()
-
-                # Only send reminder on payment day
-                if payment_date != today:
+                # We use the fixed day of month instead of next_payment_date
+                # because next_payment_date might be pushed forward if users paid early
+                payment_day = group['payment_day_of_month']
+                
+                # Simple check: does today's day match the payment day?
+                # This works for days 1-28. For 29, 30, 31 extra logic might be needed but
+                # currently groups are limited to 1-28.
+                if today.day != payment_day:
                     continue
 
                 # Get regional payment info
