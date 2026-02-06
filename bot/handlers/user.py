@@ -143,12 +143,12 @@ async def handle_user_pay(callback: types.CallbackQuery, state: FSMContext):
 
     # Ask user to select months
     await callback.message.answer(
-        f"💳 **Оплата подписки**\n\n"
+        f"💳 <b>Оплата подписки</b>\n\n"
         f"👥 Группа: {status.group_name}\n"
         f"📅 Следующий платёж: {format_date(status.next_payment_date)}\n\n"
         f"Выберите количество месяцев для оплаты:",
         reply_markup=get_months_keyboard(),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
     await state.set_state(PaymentStates.selecting_months)
@@ -194,7 +194,7 @@ async def handle_user_status(callback: types.CallbackQuery):
     status_text = get_payment_status_text(days_until)
 
     response = (
-        f"{emoji} **Статус платежей**\n\n"
+        f"{emoji} <b>Статус платежей</b>\n\n"
         f"👥 Группа: {status.group_name}\n"
         f"📅 Следующий платёж до: {format_date(status.next_payment_date)}\n"
         f"📊 Статус: {status_text}\n"
@@ -206,7 +206,7 @@ async def handle_user_status(callback: types.CallbackQuery):
     if days_until <= 3:
         response += f"\n💡 Используйте /pay для совершения платежа"
 
-    await callback.message.answer(response, parse_mode="Markdown", reply_markup=get_user_main_menu())
+    await callback.message.answer(response, parse_mode="HTML", reply_markup=get_user_main_menu())
     await callback.answer()
 
 
@@ -338,18 +338,18 @@ async def id_command(message: types.Message):
         user_obj = await db.get_user(user.id)
 
     id_text = (
-        f"🆔 **Информация о вашем Telegram**\n\n"
+        f"🆔 <b>Информация о вашем Telegram</b>\n\n"
         f"👤 Имя: {user.first_name or 'Н/Д'}\n"
         f"🏷️ Имя пользователя: @{user.username or 'Нет'}\n"
-        f"🔢 ID пользователя: `{user.id}`\n"
+        f"🔢 ID пользователя: <code>{user.id}</code>\n"
     )
 
     if user_obj and hasattr(user_obj, 'display_id'):
-        id_text += f"🎯 Ваш ID в боте: **{user_obj.display_id}**\n"
+        id_text += f"🎯 Ваш ID в боте: <b>{user_obj.display_id}</b>\n"
 
-    id_text += f"\n💡 **Для администраторов:** Чтобы сделать {username} администратором, добавьте этот ID в список TG_ADMIN_IDS в файле .env."
+    id_text += f"\n💡 <b>Для администраторов:</b> Чтобы сделать {username} администратором, добавьте этот ID в список TG_ADMIN_IDS в файле .env."
 
-    await message.answer(id_text, parse_mode="Markdown")
+    await message.answer(id_text, parse_mode="HTML")
 
 
 @user_router.message(Command("history"))
@@ -387,7 +387,7 @@ async def payment_history_command(message: types.Message):
             return
 
         history_text = (
-            f"📊 **История ваших платежей**\n"
+            f"📊 <b>История ваших платежей</b>\n"
             f"🏷️ Группа: {group.group_name}\n\n"
         )
 
@@ -395,16 +395,16 @@ async def payment_history_command(message: types.Message):
             payment_date = payment.payment_date.strftime('%Y-%m-%d')
 
             history_text += (
-                f"💳 **{payment_date}**\n"
+                f"💳 <b>{payment_date}</b>\n"
                 f"   📅 Месяцев: {payment.months_paid}\n\n"
             )
 
         if len(payments) > 10:
             history_text += f"... и ещё {len(payments) - 10} платежей\n\n"
 
-        history_text += f"📈 **Всего платежей:** {len(payments)}"
+        history_text += f"📈 <b>Всего платежей:</b> {len(payments)}"
 
-        await message.answer(history_text, parse_mode="Markdown")
+        await message.answer(history_text, parse_mode="HTML")
 
     except Exception as e:
         logger.error(f"Error getting payment history for user {user_id}: {e}")
@@ -432,21 +432,21 @@ async def join_command(message: types.Message, state: FSMContext):
         current_group = await db.get_user_group(user.id)
         if current_group:
             await message.answer(
-                f"ℹ️ Вы уже являетесь участником группы **{current_group.group_name}**.\n\n"
+                f"ℹ️ Вы уже являетесь участником группы <b>{current_group.group_name}</b>.\n\n"
                 f"Если хотите сменить группу, пожалуйста, обратитесь к администратору.",
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
             return
 
     # Ask for group ID directly
     join_text = (
-        "🚪 **Присоединение к группе**\n\n"
+        "🚪 <b>Присоединение к группе</b>\n\n"
         "Введите ID группы, к которой хотите присоединиться:\n\n"
-        "💡 **Пример:** 001, 002, 003\n\n"
-        "❌ Отправьте `отмена` или используйте /start для отмены"
+        "💡 <b>Пример:</b> 001, 002, 003\n\n"
+        "❌ Отправьте <code>отмена</code> или используйте /start для отмены"
     )
 
-    await message.answer(join_text, parse_mode="Markdown")
+    await message.answer(join_text, parse_mode="HTML")
     await state.set_state(JoinStates.selecting_group)
 
 
@@ -468,7 +468,7 @@ async def handle_group_selection(message: types.Message, state: FSMContext):
     if not text.isdigit() or len(text) != 3:
         await message.answer(
             "❌ Неверный формат. Пожалуйста, введите ID группы из трёх цифр:\n"
-            "💡 **Пример:** 001, 002, 003\n\n"
+            "💡 <b>Пример:</b> 001, 002, 003\n\n"
             "Или отправьте 'отмена' для отмены."
         )
         return
@@ -495,11 +495,11 @@ async def handle_group_selection(message: types.Message, state: FSMContext):
     builder.adjust(2)
 
     await message.answer(
-        f"Ваша группа: **{text}**\n"
-        f"Название: **{group.group_name}**\n\n"
+        f"Ваша группа: <b>{text}</b>\n"
+        f"Название: <b>{group.group_name}</b>\n\n"
         f"Верно?",
         reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 
@@ -531,24 +531,24 @@ async def confirm_join_group(callback: types.CallbackQuery, state: FSMContext):
             f"User {username} (ID: {user.id}) joined group '{group_name}' (ID: {display_id})")
 
         await callback.message.edit_text(
-            f"🎉 **Добро пожаловать в {group_name}!**\n\n"
+            f"🎉 <b>Добро пожаловать в {group_name}!</b>\n\n"
             f"Вы успешно присоединились к группе оплаты.\n\n"
             f"✅ Теперь вы можете:\n"
             f"• 💳 Загружать чеки об оплате командой /pay\n"
             f"• 📊 Проверять свой статус командой /status\n"
             f"• 📅 Просматривать историю платежей\n\n"
             f"💡 Используйте /help для просмотра всех доступных команд.",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=get_user_main_menu()
         )
     else:
         await callback.message.edit_text(
-            f"❌ Не удалось присоединиться к **{group_name}**.\n"
+            f"❌ Не удалось присоединиться к <b>{group_name}</b>.\n"
             f"Это может произойти из-за:\n"
             f"• Вы уже в этой группе\n"
             f"• Произошла ошибка базы данных\n\n"
             f"Пожалуйста, попробуйте снова или обратитесь к администратору.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         await state.clear()
 
@@ -604,7 +604,7 @@ async def status_command(message: types.Message):
     status_text = get_payment_status_text(days_until)
 
     response = (
-        f"{emoji} **Статус платежей**\n\n"
+        f"{emoji} <b>Статус платежей</b>\n\n"
         f"👥 Группа: {status.group_name}\n"
         f"📅 Следующий платёж до: {format_date(status.next_payment_date)}\n"
         f"📊 Статус: {status_text}\n"
@@ -616,7 +616,7 @@ async def status_command(message: types.Message):
     if days_until <= 3:
         response += f"\n💡 Используйте /pay для совершения платежа"
 
-    await message.answer(response, parse_mode="Markdown", reply_markup=get_user_main_menu())
+    await message.answer(response, parse_mode="HTML", reply_markup=get_user_main_menu())
 
 
 @user_router.message(Command("pay"))
@@ -657,7 +657,7 @@ async def pay_command(message: types.Message, state: FSMContext):
 
     # Show current status and payment options
     status_message = (
-        f"💳 **Оплата для группы: {status.group_name}**\n\n"
+        f"💳 <b>Оплата для группы: {status.group_name}</b>\n\n"
         f"{emoji} Следующий платёж до: {format_date(status.next_payment_date)}\n"
         f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
         f"Пожалуйста, выберите на сколько месяцев хотите заплатить:"
@@ -666,7 +666,7 @@ async def pay_command(message: types.Message, state: FSMContext):
     await message.answer(
         status_message,
         reply_markup=get_months_keyboard(),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
     await state.set_state(PaymentStates.selecting_months)
@@ -851,10 +851,10 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
             await forward_receipt_to_storage(message, user_info, payment_info)
         else:
             await message.answer(
-                "❌ **Ошибка обработки платежа**\n\n"
+                "❌ <b>Ошибка обработки платежа</b>\n\n"
                 "Произошла ошибка при обработке вашего платежа.\n"
                 "Пожалуйста, обратитесь к администратору или попробуйте позже.",
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
             logger.error(f"Payment processing failed for user {user_id}")
 
@@ -862,9 +862,9 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
 
     except Exception as e:
         await message.answer(
-            "❌ **Произошла ошибка**\n\n"
+            "❌ <b>Произошла ошибка</b>\n\n"
             "Пожалуйста, обратитесь к администратору или попробуйте позже.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         logger.error(f"Error in payment processing: {e}")
         await state.clear()
@@ -874,12 +874,12 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
 async def handle_invalid_receipt(message: types.Message):
     """Handle invalid receipt uploads"""
     await message.answer(
-        "❌ **Неверный формат чека**\n\n"
+        "❌ <b>Неверный формат чека</b>\n\n"
         "Пожалуйста, загрузите действительный чек:\n"
         "• 📷 Фотографию (JPG, PNG)\n"
         "• 📄 PDF документ\n\n"
         "Или используйте /pay для начала заново.",
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 
@@ -913,16 +913,16 @@ async def remind_payment_button(message: types.Message, state: FSMContext):
 
     if not is_registered:
         await message.reply(
-            "ℹ️ **Вы отправили файл, но вы ещё не в группе**\n\n"
+            "ℹ️ <b>Вы отправили файл, но вы ещё не в группе</b>\n\n"
             "Чтобы совершить оплату, сначала присоединитесь к группе с помощью команды /join.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
     # Reminder message for registered users
     await message.reply(
-        "⚠️ **Сначала нажмите** /pay\n\n"
+        "⚠️ <b>Сначала нажмите</b> /pay\n\n"
         "Перед отправкой чека необходимо выбрать период оплаты.\n"
         "Нажмите /pay, выберите месяцы и затем отправьте чек.",
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )

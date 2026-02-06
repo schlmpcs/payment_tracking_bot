@@ -61,10 +61,10 @@ async def admin_command(message: types.Message, state: FSMContext):
         await message.answer("✅ Предыдущая операция отменена.\n")
 
     await message.answer(
-        "🔧 **Панель администратора**\n\n"
+        "🔧 <b>Панель администратора</b>\n\n"
         "Выберите действие:",
         reply_markup=get_admin_main_keyboard(),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 
@@ -159,10 +159,10 @@ async def check_notifications_command(message: types.Message):
         # Check users overdue for admin warnings
         overdue_users = await db.get_users_overdue_for_admin_warning(3)
 
-        response = "🔍 *Проверка статуса уведомлений*\n\n"
+        response = "🔍 <b>Проверка статуса уведомлений</b>\n\n"
 
         if reminder_users:
-            response += f"📬 *Пользователи, нуждающиеся в напоминаниях* ({len(reminder_users)}):\n"
+            response += f"📬 <b>Пользователи, нуждающиеся в напоминаниях</b> ({len(reminder_users)}):\n"
             for status in reminder_users:
                 response += f"• Пользователь {status.user_id} в '{status.group_name}'\n"
                 response += f"  📅 Срок: {format_date(status.next_payment_date)}\n"
@@ -171,7 +171,7 @@ async def check_notifications_command(message: types.Message):
             response += "📭 Сегодня никому не нужны напоминания об оплате\n\n"
 
         if overdue_users:
-            response += f"🚨 *Пользователи с просроченными платежами для предупреждения администратора* ({len(overdue_users)}):\n"
+            response += f"🚨 <b>Пользователи с просроченными платежами для предупреждения администратора</b> ({len(overdue_users)}):\n"
             for status in overdue_users:
                 user_name = getattr(status, 'first_name',
                                     f'Пользователь {status.user_id}')
@@ -181,15 +181,15 @@ async def check_notifications_command(message: types.Message):
         else:
             response += "✅ Нет пользователей с просроченными предупреждениями\n\n"
 
-        response += "💡 Используйте /test\\_notifications для фактической отправки этих уведомлений"
+        response += "💡 Используйте /test_notifications для фактической отправки этих уведомлений"
 
-        await message.answer(response, parse_mode="Markdown")
+        await message.answer(response, parse_mode="HTML")
 
     except Exception as e:
         logger.error(f"Check notifications failed: {e}")
         await message.answer(
-            f"❌ *Проверка не удалась:*\n\n`{str(e)}`",
-            parse_mode="Markdown"
+            f"❌ <b>Проверка не удалась:</b>\n\n<code>{str(e)}</code>",
+            parse_mode="HTML"
         )
 
 
@@ -221,19 +221,19 @@ async def test_notifications_command(message: types.Message):
         await test_scheduler.send_test_notifications()
 
         await message.answer(
-            "✅ **Тестовые уведомления завершены!**\n\n"
+            "✅ <b>Тестовые уведомления завершены!</b>\n\n"
             "Проверьте логи бота, чтобы увидеть, были ли отправлены уведомления.\n\n"
-            "💡 **Напоминание:** Уведомления отправляются автоматически ежедневно в 9:00 утра.",
-            parse_mode="Markdown"
+            "💡 <b>Напоминание:</b> Уведомления отправляются автоматически ежедневно в 9:00 утра.",
+            parse_mode="HTML"
         )
 
     except Exception as e:
         logger.error(f"❌ Test notifications failed: {e}")
         await message.answer(
-            f"❌ **Тестовые уведомления не удались:**\n\n"
-            f"`{str(e)}`\n\n"
+            f"❌ <b>Тестовые уведомления не удались:</b>\n\n"
+            f"<code>{str(e)}</code>\n\n"
             f"Проверьте логи бота для получения дополнительной информации.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 
@@ -265,19 +265,19 @@ async def test_admin_notification_command(message: types.Message):
         await test_scheduler._send_admin_warnings()
 
         await message.answer(
-            "✅ **Тест уведомлений администраторов завершен!**\n\n"
+            "✅ <b>Тест уведомлений администраторов завершен!</b>\n\n"
             "Если есть пользователи, просроченные на 3+ дня, вы должны были получить уведомление.\n\n"
-            "💡 **Напоминание:** Уведомления администраторов отправляются автоматически ежедневно в 9:00 утра.",
-            parse_mode="Markdown"
+            "💡 <b>Напоминание:</b> Уведомления администраторов отправляются автоматически ежедневно в 9:00 утра.",
+            parse_mode="HTML"
         )
 
     except Exception as e:
         logger.error(f"❌ Test admin notification failed: {e}")
         await message.answer(
-            f"❌ **Тест не удался:**\n\n"
-            f"`{str(e)}`\n\n"
+            f"❌ <b>Тест не удался:</b>\n\n"
+            f"<code>{str(e)}</code>\n\n"
             f"Проверьте логи бота для получения дополнительной информации.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 
@@ -302,7 +302,7 @@ async def update_due_date_command(message: types.Message, state: FSMContext):
         await message.answer("❌ Нет доступных групп.")
         return
 
-    groups_text = "📅 **Обновить дату платежа группы**\n\n"
+    groups_text = "📅 <b>Обновить дату платежа группы</b>\n\n"
     groups_text += "Доступные группы:\n\n"
 
     for group in groups:
@@ -314,14 +314,14 @@ async def update_due_date_command(message: types.Message, state: FSMContext):
         status_emoji = get_payment_status_emoji(days_until)
 
         groups_text += (
-            f"{status_emoji} **{group.group_name}** (ID: {group.display_id})\n"
+            f"{status_emoji} <b>{group.group_name}</b> (ID: {group.display_id})\n"
             f"📅 Текущая дата платежа: {format_date(group.next_payment_date)}\n"
             f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
         )
 
     groups_text += "Пожалуйста, введите название группы или ID (например: 'spotify 001' или '001'):"
 
-    await message.answer(groups_text, parse_mode="Markdown")
+    await message.answer(groups_text, parse_mode="HTML")
     await state.set_state(AdminStates.updating_due_date_group)
 
 
@@ -413,18 +413,18 @@ async def import_groups_start(callback: types.CallbackQuery, state: FSMContext):
 
     await state.set_state(AdminStates.importing_groups_file)
     await callback.message.edit_text(
-        "📊 **Импорт групп из Excel файла**\n\n"
+        "📊 <b>Импорт групп из Excel файла</b>\n\n"
         "Отправьте Excel файл (.xlsx) с данными для импорта групп.\n\n"
-        "**Формат файла:**\n"
+        "<b>Формат файла:</b>\n"
         "• Столбец A: Названия групп (например: spotify 001)\n"
         "• Столбец B: ID групп (например: 001)\n\n"
-        "**Пример:**\n"
-        "```\n"
+        "<b>Пример:</b>\n"
+        "<pre>\n"
         "spotify 001 | 001\n"
         "spotify 002 | 002\n"
-        "```\n\n"
+        "</pre>\n\n"
         "📎 Прикрепите файл к следующему сообщению или используйте /admin для отмены:",
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
     await callback.answer()
 
@@ -438,10 +438,10 @@ async def create_group_start(callback: types.CallbackQuery, state: FSMContext):
         return
 
     await callback.message.edit_text(
-        "➕ **Создать новую группу**\n\n"
+        "➕ <b>Создать новую группу</b>\n\n"
         "Пожалуйста, введите название группы:\n\n"
-        "💡 *Используйте /admin для отмены операции*",
-        parse_mode="Markdown"
+        "💡 <i>Используйте /admin для отмены операции</i>",
+        parse_mode="HTML"
     )
 
     await state.set_state(AdminStates.creating_group)
@@ -575,10 +575,10 @@ async def add_user_start(callback: types.CallbackQuery, state: FSMContext):
         return
 
     await callback.message.edit_text(
-        "👤 **Добавить пользователя в группу**\n\n"
+        "👤 <b>Добавить пользователя в группу</b>\n\n"
         "Пожалуйста, введите Telegram ID пользователя (числовой):\n\n"
-        "💡 *Используйте /admin для отмены операции*",
-        parse_mode="Markdown"
+        "💡 <i>Используйте /admin для отмены операции</i>",
+        parse_mode="HTML"
     )
 
     await state.set_state(AdminStates.adding_user_username)
@@ -617,8 +617,8 @@ async def add_user_get_group(message: types.Message, state: FSMContext):
     await message.answer(
         f"{groups_text}\n"
         f"Please enter the group name to add user {target_user_id} to:\n\n"
-        f"💡 *Используйте /admin для отмены операции*",
-        parse_mode="Markdown"
+        f"💡 <i>Используйте /admin для отмены операции</i>",
+        parse_mode="HTML"
     )
 
     await state.set_state(AdminStates.adding_user_group)
@@ -653,11 +653,11 @@ async def add_user_finish(message: types.Message, state: FSMContext):
 
     if success:
         await message.answer(
-            f"✅ **User Added Successfully!**\n\n"
+            f"✅ <b>User Added Successfully!</b>\n\n"
             f"👤 User ID: {target_user_id}\n"
             f"👥 Group: {group_name}\n"
             f"📅 Next payment due: {format_date(group.next_payment_date)}",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         logger.info(
             f"Admin {user_id} added user {target_user_id} to group '{group_name}'")
@@ -681,7 +681,7 @@ async def update_due_date_start(callback: types.CallbackQuery, state: FSMContext
         await callback.message.edit_text("❌ No groups available.")
         return
 
-    groups_text = "📅 **Update Group Due Date**\n\n"
+    groups_text = "📅 <b>Update Group Due Date</b>\n\n"
     groups_text += "Available groups:\n\n"
 
     for group in groups:
@@ -689,15 +689,15 @@ async def update_due_date_start(callback: types.CallbackQuery, state: FSMContext
         status_emoji = get_payment_status_emoji(days_until)
 
         groups_text += (
-            f"{status_emoji} **{group.group_name}** (ID: {group.group_id})\n"
+            f"{status_emoji} <b>{group.group_name}</b> (ID: {group.group_id})\n"
             f"📅 Current due date: {format_date(group.next_payment_date)}\n"
             f"📊 Status: {get_payment_status_text(days_until)}\n\n"
         )
 
     groups_text += "Please enter the group name you want to update:\n\n"
-    groups_text += "💡 *Используйте /admin для отмены операции*"
+    groups_text += "💡 <i>Используйте /admin для отмены операции</i>"
 
-    await callback.message.edit_text(groups_text, parse_mode="Markdown")
+    await callback.message.edit_text(groups_text, parse_mode="HTML")
     await state.set_state(AdminStates.updating_due_date_group)
     await callback.answer()
 
@@ -723,14 +723,14 @@ async def update_due_date_get_date(message: types.Message, state: FSMContext):
     await state.update_data(group=group)
 
     await message.answer(
-        f"📅 **Update Due Date for {group.group_name}**\n\n"
+        f"📅 <b>Update Due Date for {group.group_name}</b>\n\n"
         f"Current due date: {format_date(group.next_payment_date)}\n\n"
-        f"Please enter the new due date in format: **YYYY-MM-DD**\n\n"
+        f"Please enter the new due date in format: <b>YYYY-MM-DD</b>\n\n"
         f"Examples:\n"
-        f"• `2025-11-15` (November 15, 2025)\n"
-        f"• `2025-12-01` (December 1, 2025)\n\n"
-        f"💡 *Используйте /admin для отмены операции*",
-        parse_mode="Markdown"
+        f"• <code>2025-11-15</code> (November 15, 2025)\n"
+        f"• <code>2025-12-01</code> (December 1, 2025)\n\n"
+        f"💡 <i>Используйте /admin для отмены операции</i>",
+        parse_mode="HTML"
     )
 
     await state.set_state(AdminStates.updating_due_date_date)
@@ -786,13 +786,13 @@ async def update_due_date_finish(message: types.Message, state: FSMContext):
         status_emoji = get_payment_status_emoji(days_until)
 
         await message.answer(
-            f"✅ **Due Date Updated Successfully!**\n\n"
+            f"✅ <b>Due Date Updated Successfully!</b>\n\n"
             f"👥 Group: {group.group_name}\n"
             f"📅 Old due date: {format_date(group.next_payment_date)}\n"
             f"📅 New due date: {format_date(new_due_date.date())}\n"
             f"{status_emoji} Status: {get_payment_status_text(days_until)}\n\n"
             f"💡 All users in this group will now be reminded based on the new date.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
         logger.info(
@@ -1071,9 +1071,9 @@ async def handle_test_notifications(callback: types.CallbackQuery):
 
     if not db or not db.pool:
         await callback.message.edit_text(
-            "❌ **Test Notifications Failed**\n\n"
+            "❌ <b>Test Notifications Failed</b>\n\n"
             "Database is not available.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
@@ -1082,29 +1082,29 @@ async def handle_test_notifications(callback: types.CallbackQuery):
         test_scheduler = NotificationScheduler(callback.bot, db, settings)
 
         await callback.message.edit_text(
-            "🧪 **Running Test Notifications**\n\n"
+            "🧪 <b>Running Test Notifications</b>\n\n"
             "Checking for users needing reminders and overdue warnings...\n"
             "This may take a few seconds.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
         # Run the notification checks
         await test_scheduler.send_test_notifications()
 
         await callback.message.edit_text(
-            "✅ **Test Notifications Complete**\n\n"
+            "✅ <b>Test Notifications Complete</b>\n\n"
             "Check the bot logs for details about sent notifications.\n\n"
-            "💡 **Note:** Notifications are sent automatically daily at 9:00 AM.",
-            parse_mode="Markdown"
+            "💡 <b>Note:</b> Notifications are sent automatically daily at 9:00 AM.",
+            parse_mode="HTML"
         )
 
     except Exception as e:
         logger.error(f"❌ Test notifications failed: {e}")
         await callback.message.edit_text(
-            f"❌ **Test Notifications Failed**\n\n"
+            f"❌ <b>Test Notifications Failed</b>\n\n"
             f"Error: {str(e)}\n\n"
             f"Check the bot logs for more details.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 
@@ -1121,14 +1121,14 @@ async def test_receipt_storage_command(message: types.Message):
 
     if not settings.tg_receipt_storage_chat_id:
         await message.answer(
-            "⚠️ **Хранилище чеков не настроено**\n\n"
+            "⚠️ <b>Хранилище чеков не настроено</b>\n\n"
             "Для включения функции хранения чеков:\n"
             "1. Создайте приватный чат/группу для хранения чеков\n"
             "2. Получите Chat ID этого чата\n"
             "3. Добавьте в .env файл:\n"
-            "`TG_RECEIPT_STORAGE_CHAT_ID=ваш_chat_id`\n\n"
+            "<code>TG_RECEIPT_STORAGE_CHAT_ID=ваш_chat_id</code>\n\n"
             "📖 Подробные инструкции в файле RECEIPT_STORAGE_README.md",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
@@ -1149,11 +1149,11 @@ async def test_receipt_storage_command(message: types.Message):
         )
 
         await message.answer(
-            f"✅ **Тест хранилища чеков прошёл успешно!**\n\n"
-            f"📊 Chat ID: `{settings.tg_receipt_storage_chat_id}`\n"
+            f"✅ <b>Тест хранилища чеков прошёл успешно!</b>\n\n"
+            f"📊 Chat ID: <code>{settings.tg_receipt_storage_chat_id}</code>\n"
             f"📨 Тестовое сообщение отправлено в хранилище\n\n"
             f"🔧 Все новые чеки будут автоматически пересылаться в это хранилище.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
         logger.info(
@@ -1162,16 +1162,16 @@ async def test_receipt_storage_command(message: types.Message):
     except Exception as e:
         error_msg = str(e)
         await message.answer(
-            f"❌ **Ошибка теста хранилища чеков**\n\n"
-            f"📊 Chat ID: `{settings.tg_receipt_storage_chat_id}`\n"
+            f"❌ <b>Ошибка теста хранилища чеков</b>\n\n"
+            f"📊 Chat ID: <code>{settings.tg_receipt_storage_chat_id}</code>\n"
             f"⚠️ Ошибка: {error_msg}\n\n"
-            f"**Возможные причины:**\n"
+            f"<b>Возможные причины:</b>\n"
             f"• Неверный Chat ID\n"
             f"• Бот не добавлен в целевой чат\n"
             f"• Нет прав на отправку сообщений\n"
             f"• Чат заблокирован или удалён\n\n"
             f"📖 Проверьте инструкции в RECEIPT_STORAGE_README.md",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
         logger.error(f"Receipt storage test failed: {e}")
@@ -1194,18 +1194,18 @@ async def import_groups_command(message: types.Message, state: FSMContext):
 
     await state.set_state(AdminStates.importing_groups_file)
     await message.answer(
-        "📊 **Импорт групп из Excel файла**\n\n"
+        "📊 <b>Импорт групп из Excel файла</b>\n\n"
         "Отправьте Excel файл (.xlsx) с данными для импорта групп.\n\n"
-        "**Формат файла:**\n"
+        "<b>Формат файла:</b>\n"
         "• Столбец A: Названия групп (например: spotify 001)\n"
         "• Столбец B: ID групп (например: 001)\n\n"
-        "**Пример:**\n"
-        "```\n"
+        "<b>Пример:</b>\n"
+        "<pre>\n"
         "spotify 001 | 001\n"
         "spotify 002 | 002\n"
-        "```\n\n"
+        "</pre>\n\n"
         "📎 Прикрепите файл к следующему сообщению:",
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 
@@ -1305,11 +1305,11 @@ async def handle_import_file(message: types.Message, state: FSMContext):
             await state.update_data(groups_data=groups_data, errors=errors)
 
             # Show preview
-            preview_text = "📋 **Предварительный просмотр импорта:**\n\n"
+            preview_text = "📋 <b>Предварительный просмотр импорта:</b>\n\n"
             preview_text += f"✅ Найдено групп для импорта: {len(groups_data)}\n\n"
 
             if errors:
-                preview_text += f"⚠️ **Ошибки ({len(errors)}):**\n"
+                preview_text += f"⚠️ <b>Ошибки ({len(errors)}):</b>\n"
                 for error in errors[:5]:  # Show first 5 errors
                     preview_text += f"• {error}\n"
                 if len(errors) > 5:
@@ -1317,7 +1317,7 @@ async def handle_import_file(message: types.Message, state: FSMContext):
                 preview_text += "\n"
 
             if groups_data and not errors:
-                preview_text += "**Группы для создания:**\n"
+                preview_text += "<b>Группы для создания:</b>\n"
                 for i, group in enumerate(groups_data[:10]):  # Show first 10
                     preview_text += f"• {group['name']} (ID: {group['display_id']})\n"
                 if len(groups_data) > 10:
@@ -1336,13 +1336,13 @@ async def handle_import_file(message: types.Message, state: FSMContext):
 
                 await message.answer(
                     preview_text,
-                    parse_mode="Markdown",
+                    parse_mode="HTML",
                     reply_markup=builder.as_markup()
                 )
             else:
                 await message.answer(
                     preview_text + "\n❌ Импорт невозможен из-за ошибок в данных.",
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
                 await state.clear()
 
@@ -1402,10 +1402,10 @@ async def confirm_import_groups(callback: types.CallbackQuery, state: FSMContext
         success_count = await db.bulk_import_groups(groups_data)
 
         await callback.message.edit_text(
-            f"✅ **Импорт завершён!**\n\n"
+            f"✅ <b>Импорт завершён!</b>\n\n"
             f"Успешно создано групп: {success_count} из {len(groups_data)}\n\n"
             f"Используйте /admin для управления группами.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
     except Exception as e:
@@ -1463,8 +1463,8 @@ async def delete_group_page(callback: types.CallbackQuery, state: FSMContext, pa
     end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
     page_groups = groups[start_idx:end_idx]
 
-    groups_text = f"🗑️ **Удаление группы (стр. {page + 1}/{total_pages})**\n\n"
-    groups_text += "⚠️ **ВНИМАНИЕ**: Удаление группы необратимо!\n"
+    groups_text = f"🗑️ <b>Удаление группы (стр. {page + 1}/{total_pages})</b>\n\n"
+    groups_text += "⚠️ <b>ВНИМАНИЕ</b>: Удаление группы необратимо!\n"
     groups_text += "Будут удалены:\n• Все участники группы\n• История платежей\n• Все связанные данные\n\n"
     groups_text += "Доступные группы:\n\n"
 
@@ -1474,19 +1474,19 @@ async def delete_group_page(callback: types.CallbackQuery, state: FSMContext, pa
         member_count = len(members)
 
         groups_text += (
-            f"🏷️ **{group.group_name}** (ID: {group.display_id})\n"
+            f"🏷️ <b>{group.group_name}</b> (ID: {group.display_id})\n"
             f"👥 Участников: {member_count}\n"
             f"📅 Следующий платёж: {format_date(group.next_payment_date)}\n\n"
         )
 
     groups_text += "Введите название группы или ID для удаления (например: 'spotify 001' или '001'):\n\n"
-    groups_text += "💡 *Используйте /admin для отмены операции*"
+    groups_text += "💡 <i>Используйте /admin для отмены операции</i>"
 
     # Add pagination keyboard
     keyboard = get_pagination_keyboard(
         page, total_pages, "delete_group", show_back=True)
 
-    await callback.message.edit_text(groups_text, parse_mode="Markdown", reply_markup=keyboard)
+    await callback.message.edit_text(groups_text, parse_mode="HTML", reply_markup=keyboard)
     await state.set_state(AdminStates.deleting_group_select)
     await callback.answer()
 
@@ -1520,12 +1520,12 @@ async def delete_group_confirm(message: types.Message, state: FSMContext):
     await state.update_data(group=group, member_count=member_count)
 
     confirmation_text = (
-        f"⚠️ **ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ**\n\n"
+        f"⚠️ <b>ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ</b>\n\n"
         f"Вы действительно хотите удалить группу?\n\n"
-        f"🏷️ **Группа**: {group.group_name} (ID: {group.display_id})\n"
-        f"👥 **Участников**: {member_count}\n"
-        f"📅 **Дата платежа**: {format_date(group.next_payment_date)}\n\n"
-        f"🚨 **ЭТО ДЕЙСТВИЕ НЕОБРАТИМО!**\n"
+        f"🏷️ <b>Группа</b>: {group.group_name} (ID: {group.display_id})\n"
+        f"👥 <b>Участников</b>: {member_count}\n"
+        f"📅 <b>Дата платежа</b>: {format_date(group.next_payment_date)}\n\n"
+        f"🚨 <b>ЭТО ДЕЙСТВИЕ НЕОБРАТИМО!</b>\n"
         f"Будут удалены:\n"
         f"• Все {member_count} участников\n"
         f"• Вся история платежей\n"
@@ -1544,7 +1544,7 @@ async def delete_group_confirm(message: types.Message, state: FSMContext):
 
     await message.answer(
         confirmation_text,
-        parse_mode="Markdown",
+        parse_mode="HTML",
         reply_markup=builder.as_markup()
     )
 
@@ -1580,9 +1580,10 @@ async def execute_group_deletion(callback: types.CallbackQuery, state: FSMContex
             )
         else:
             await callback.message.edit_text(
-                f"❌ **Ошибка при удалении группы**\n\n"
+                f"❌ <b>Ошибка при удалении группы</b>\n\n"
                 f"Не удалось удалить группу {group.group_name}.\n"
-                f"Пожалуйста, попробуйте позже или обратитесь к техподдержке."
+                f"Пожалуйста, попробуйте позже или обратитесь к техподдержке.",
+                parse_mode="HTML"
             )
 
     except Exception as e:
@@ -1639,7 +1640,7 @@ async def manage_members_page(callback: types.CallbackQuery, state: FSMContext, 
     end_idx = min(start_idx + GROUPS_PER_PAGE, total_groups)
     page_groups = groups[start_idx:end_idx]
 
-    groups_text = f"👥 **Управление участниками групп (стр. {page + 1}/{total_pages})**\n\n"
+    groups_text = f"👥 <b>Управление участниками групп (стр. {page + 1}/{total_pages})</b>\n\n"
     groups_text += "Выберите группу для просмотра участников:\n\n"
 
     for group in page_groups:
@@ -1647,18 +1648,18 @@ async def manage_members_page(callback: types.CallbackQuery, state: FSMContext, 
         member_count = len(members)
 
         groups_text += (
-            f"🏷️ **{group.group_name}** (ID: {group.display_id})\n"
+            f"🏷️ <b>{group.group_name}</b> (ID: {group.display_id})\n"
             f"👥 Участников: {member_count}\n\n"
         )
 
     groups_text += "Введите название группы или ID (например: 'spotify 001' или '001'):\n\n"
-    groups_text += "💡 *Используйте /admin для отмены операции*"
+    groups_text += "💡 <i>Используйте /admin для отмены операции</i>"
 
     # Add pagination keyboard
     keyboard = get_pagination_keyboard(
         page, total_pages, "manage_members", show_back=True)
 
-    await callback.message.edit_text(groups_text, parse_mode="Markdown", reply_markup=keyboard)
+    await callback.message.edit_text(groups_text, parse_mode="HTML", reply_markup=keyboard)
     await state.set_state(AdminStates.removing_user_select_group)
     await callback.answer()
 
@@ -1687,8 +1688,9 @@ async def show_group_members(message: types.Message, state: FSMContext):
 
     if not members:
         await message.answer(
-            f"📭 **Группа {group.group_name} пуста**\n\n"
-            f"В этой группе пока нет участников."
+            f"📭 <b>Группа {group.group_name} пуста</b>\n\n"
+            f"В этой группе пока нет участников.",
+            parse_mode="HTML"
         )
         await state.clear()
         return
@@ -1767,8 +1769,9 @@ async def remove_user_from_group(message: types.Message, state: FSMContext):
         )
     else:
         await message.answer(
-            f"❌ **Ошибка при удалении пользователя**\n\n"
-            f"Не удалось удалить пользователя из группы."
+            f"❌ <b>Ошибка при удалении пользователя</b>\n\n"
+            f"Не удалось удалить пользователя из группы.",
+            parse_mode="HTML"
         )
 
     await state.clear()
@@ -1783,10 +1786,10 @@ async def back_to_admin_menu(callback: types.CallbackQuery):
         return
 
     await callback.message.edit_text(
-        "🔧 **Панель администратора**\n\n"
+        "🔧 <b>Панель администратора</b>\n\n"
         "Выберите действие:",
         reply_markup=get_admin_main_keyboard(),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
     await callback.answer()
 
