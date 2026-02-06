@@ -881,3 +881,48 @@ async def handle_invalid_receipt(message: types.Message):
         "Или используйте /pay для начала заново.",
         parse_mode="Markdown"
     )
+
+
+@user_router.message(F.photo | F.document)
+async def remind_payment_button(message: types.Message, state: FSMContext):
+    """
+    Catch-all for files sent without active payment state.
+    Reminds user to use /pay or payment button.
+    """
+    # Only handle private chats
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
+    # Check current state
+    current_state = await state.get_state()
+    if current_state:
+        # If user is in another specific state, do not interrupt
+        return
+
+    # Check database availability
+    if not db or not db.pool:
+        return
+
+    # Check if user is registered
+    is_registered = False
+    try:
+        is_registered = await db.is_user_registered(message.from_user.id)
+    except Exception as e:
+        logger.error(f"Error checking registration status in reminder: {e}")
+        return
+
+    if not is_registered:
+        await message.reply(
+            "ℹ️ **Вы отправили файл, но вы ещё не в группе**\n\n"
+            "Чтобы совершить оплату, сначала присоединитесь к группе с помощью команды /join.",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Reminder message for registered users
+    await message.reply(
+        "⚠️ **Сначала нажмите** /pay\n\n"
+        "Перед отправкой чека необходимо выбрать период оплаты.\n"
+        "Нажмите /pay, выберите месяцы и затем отправьте чек.",
+        parse_mode="Markdown"
+    )
