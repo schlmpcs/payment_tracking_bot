@@ -1,118 +1,111 @@
-# Payment tracking bot
+# Spotify Family Automatization Bot 🎵
 
-A Telegram bot for managing subscription payments with receipt uploads and automatic tracking.
+A comprehensive Telegram bot for automating Spotify Family plan payments, member tracking, and receipt verification.
 
 ## 🚀 Features
 
-### For Users:
-- **💳 Payment Uploads**: Easy receipt upload with automatic processing
-- **📊 Status Checking**: Real-time payment status and due dates
-- **📅 Payment History**: Track all payment records
-- **🔔 Smart Notifications**: Get notified about upcoming payments
+### **Member Management**
 
-### For Admins:
-- **👥 Group Management**: Create and manage payment groups
-- **👤 User Management**: Add users to groups
-- **📈 Statistics**: View payment statistics and overdue users
-- **🔍 Monitoring**: Track all payments and user activities
+* **Automatic Registration**: Users join groups via unique invite links.
+* **Group Tracking**: Supports multiple family groups (KZ/RU regions).
+* **Payment Reminders**: Automated notifications when subscriptions are due.
+* **Kick/Ban Logic**: Automatic removal of non-paying members after 3 warnings.
 
-## 🛠 Setup
+### **Payment Processing**
 
-1. **Clone and Install:**
-   ```bash
-   git clone <repository>
-   cd folder_name
-   pip install -r requirements.txt
-   ```
+* **Receipt Upload**: Users upload payment receipts (Photos/PDFs) directly to the bot.
+* **Manual Verification**: Admins review and approve/reject payments.
+* **Subscription Extension**: Automated extension of "paid until" dates upon approval.
+* **Receipt Archiving**: All receipts are forwarded to a private channel for audit.
 
-2. **Environment Configuration:**
-   Copy `.env.example` to `.env` and fill in your values:
-   ```bash
-   cp .env.example .env
-   ```
+### **Fraud Detection & Analytics (New! 🕵️‍♀️)**
 
-3. **Database Setup:**
-   Create your PostgreSQL database and update the connection details in `.env`
+* **Receipt Parsing**: Automatically extracts "Operation Numbers" from Kaspi receipts (PDFs).
+* **Fraud Check (`/fraudcheck`)**:
+  * Admins upload a Kaspi statement (Excel/CSV).
+  * Bot compares statement operations against database records.
+  * **Reports suspicious receipts** (Present in DB but missing from bank statement).
+  * **Identifies missing payments** (Present in statement but not in DB).
+* **Historical Backfill (`/backfill_receipts`)**: Scans past receipts (starting Feb 2026) to extract operation numbers retrospectively.
 
-4. **Run the Bot:**
-   ```bash
-   python main.py
-   ```
+## 🛠️ Tech Stack
 
-## 🔧 Configuration
+* **Language**: Python 3.11+
+* **Framework**: Aiogram 3.x (Asyncio)
+* **Database**: PostgreSQL (via AsyncPG)
+* **Deployment**: Docker & Docker Compose
+* **Libraries**: `pdfplumber` (PDF parsing), `pandas` (Excel processing)
 
-### Environment Variables
+## 📦 Installation & Deployment
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `TG_TOKEN` | Telegram bot token from BotFather | ✅ |
-| `TG_ADMIN_IDS` | Comma-separated list of admin user IDs | ✅ |
-| `DB_HOST` | Database host | ✅ |
-| `DB_USERNAME` | Database username | ✅ |
-| `DB_PASSWORD` | Database password | ✅ |
-| `DB_DATABASE` | Database name | ✅ |
-| `DB_PORT` | Database port (default: 5432) | ❌ |
-| `DB_SSL_MODE` | SSL mode (default: require) | ❌ |
-| `BOT_DEFAULT_PAYMENT_PRICE` | Default monthly price | ❌ |
-| `BOT_MAX_MONTHS_PAYMENT` | Max months per payment | ❌ |
+### **Prerequisites**
 
-## 📱 Usage
+1. **Docker & Docker Compose** installed.
+2. **PostgreSQL** database running (cloud or local).
+3. **Telegram Bot Token** from @BotFather.
 
-### User Commands:
-- `/start` - Welcome and status overview
-- `/pay` - Upload payment receipt
-- `/status` - Check payment status
-- `/help` - Show help information
+### **Configuration**
 
-### Admin Commands:
-- `/admin` - Open admin panel
-- Create groups, add users, view statistics
+Create a `.env` file in the root directory:
 
-## 🏗 Architecture
-
-```
-bot/
-├── config/          # Configuration and settings
-├── database/        # Database models and operations
-├── handlers/        # Command handlers (user & admin)
-├── utils/          # Utilities, keyboards, helpers
-└── main.py         # Application entry point
+```env
+BOT_TOKEN=your_bot_token
+ADMIN_IDS=12345678,87654321
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+RECEIPT_STORAGE_CHAT_ID=-100xxxxxxxxxx
 ```
 
-## 🔒 Security Features
+### **Run with Docker (Recommended)**
 
-- **Private Chat Only**: All commands work only in private messages
-- **Admin Authorization**: Admin commands require user ID verification
-- **Input Validation**: All user inputs are validated and sanitized
-- **Error Handling**: Comprehensive error handling and logging
-- **Database Security**: Prepared statements prevent SQL injection
+**1. Build and Run**
 
-## 📊 Database Schema
+```bash
+# Build image
+docker build -t yourusername/spotify-bot:latest .
 
-- **users**: User information and registration
-- **groups**: Payment groups with due dates
-- **payments**: Payment records with receipts
-- **user_groups**: User-group associations
+# Run container
+docker run -d --name spotify-bot --env-file .env --restart unless-stopped yourusername/spotify-bot:latest
+```
 
-## 🚀 Deployment
+**2. Using Docker Compose**
 
-The bot is designed to work with cloud databases and can be deployed on:
-- Heroku
-- Railway
-- Koyeb
-- VPS with Docker
+```bash
+docker-compose up -d --build
+```
 
-## 📝 License
+### **Manual Run**
 
-This project is licensed under the MIT License.
+```bash
+pip install -r requirements.txt
+python main.py
+```
 
-## 🤝 Contributing
+## 📝 Usage Commands
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+### **User Commands**
+
+* `/start` - Register/Main Menu.
+* `/profile` - View subscription status.
+* `/pay` - Start payment process (upload receipt).
+* `/support` - Contact admin.
+
+### **Admin Commands**
+
+* `/admin` - Admin panel.
+* `/stats` - View payment statistics.
+* `/broadcast` - Send message to all users.
+* `/fraudcheck` - Upload Kaspi statement for reconciliation (KZ only).
+* `/backfill_receipts` - Process old receipts for operation numbers.
+
+## 🔐 Database Schema
+
+* **`users`**: Stores Telegram ID, username, group ID.
+* **`groups`**: Stores invitelink, cost, region.
+* **`payments`**: Stores payment records, receipt file IDs, **operation numbers**.
+
+## 🤝 Contribution
+
+Feel free to fork and submit PRs! Run tests locally before pushing.
 
 ---
-
-Built with ❤️ using Python, aiogram 3.x, and PostgreSQL
+*Developed by [Your Name]*
