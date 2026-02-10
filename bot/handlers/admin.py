@@ -1805,3 +1805,226 @@ async def noop_handler(callback: types.CallbackQuery):
 async def handle_unknown_admin_action(callback: types.CallbackQuery):
     """Handle unknown admin actions"""
     await callback.answer("This feature is not implemented yet.", show_alert=True)
+@admin_router.message(Command("fraudcheck"))
+async def fraud_check_command(message: types.Message, state: FSMContext):
+    """Handle /fraudcheck command - KZ Only (starts with '0')"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+
+    if not db or not db.pool:
+        await message.answer("❌ База данных недоступна.")
+        return
+
+    await message.answer(
+        "🕵️‍♀️ <b>Проверка на мошенничество (Fraud Check)</b>\n\n"
+        "Пожалуйста, отправьте файл выписки Kaspi (Excel .xlsx или .csv).\n"
+        "Бот сверит операции из выписки с базой данных (только для групп Казахстана).\n\n"
+        "💡 <i>Используйте /admin для отмены</i>",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminStates.fraud_check_file)
+
+
+@admin_router.message(StateFilter(AdminStates.fraud_check_file), F.document)
+async def fraud_check_process(message: types.Message, state: FSMContext):
+    """Process fraud check statement file"""
+    document = message.document
+    file_name = document.file_name.lower()
+    
+    if not (file_name.endswith('.xlsx') or file_name.endswith('.xls') or file_name.endswith('.csv')):
+        await message.answer(
+            "❌ Неверный формат файла. Пожалуйста, отправьте Excel (.xlsx) или CSV файл."
+        )
+        return
+
+    await message.answer("⏳ Обработка файла и сверка данных...")
+
+    import tempfile
+    import os
+    from bot.utils.receipt_parser import load_kaspi_statement
+
+    try:
+        # Download statement
+        file = await message.bot.get_file(document.file_id)
+        
+        with tempfile.NamedTemporaryFile(suffix=os.path.splitext(file_name)[1], delete=False) as temp_file:
+            temp_file_name = temp_file.name
+            
+        await message.bot.download_file(file.file_path, temp_file_name)
+        
+        # Parse statement
+        statement_ops = load_kaspi_statement(temp_file_name)
+        
+        try:
+             os.remove(temp_file_name)
+        except OSError:
+             pass
+        
+        if not statement_ops:
+            await message.answer("❌ Не удалось найти операции в файле или файл пуст.")
+            await state.clear()
+            return
+
+        # Fetch all relevant payments from DB (KZ groups only, with accumulated op_numbers)
+        current_month_start = get_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
+        async with db.pool.acquire() as conn:
+             # Groups starting with '0' are KZ
+             # We want payments that HAVE an op number
+             # JOIN users table to get username
+            rows = await conn.fetch(
+                """
+                SELECT 
+                    p.payment_id, 
+                    p.payment_date, 
+                    p.receipt_op_number, 
+                    p.user_id, 
+                    g.group_name,
+                    u.username
+                FROM payments p
+                JOIN groups g ON p.group_id = g.group_id
+                JOIN users u ON p.user_id = u.user_id
+                WHERE p.receipt_op_number IS NOT NULL
+                AND g.display_id LIKE '0%'
+                AND p.payment_date >= $1
+                ORDER BY p.payment_date DESC
+                """,
+                current_month_start
+            )
+            
+        frauds = []
+        
+        for row in rows:
+            op_num = row['receipt_op_number']
+            # Normalize just in case
+            norm_op = str(op_num).replace("QR", "").replace(" ", "").strip()
+            
+            if norm_op not in statement_ops:
+                # Format user display name: ID (copyable) + @username
+                user_id_display = f"<code>{row['user_id']}</code>"
+                if row['username']:
+                    user_display = f"ID: {user_id_display} (@{row['username']})"
+                else:
+                    user_display = f"ID: {user_id_display}"
+                    
+                frauds.append({
+                    'date': row['payment_date'],
+                    'op': op_num,
+                    'user': user_display,
+                    'group': row['group_name']
+                })
+
+        if not frauds:
+            await message.answer(
+                f"✅ <b>Всё чисто!</b>\n\n"
+                f"Проверено {len(rows)} платежей за этот месяц.\n"
+                f"Все номера квитанций найдены в выписке.",
+                parse_mode="HTML"
+            )
+        else:
+            report_lines = [f"⚠️ <b>Подозрительные платежи ({len(frauds)}):</b>\n"]
+            report_lines.append("(Есть в базе, но НЕТ в выписке)\n")
+            
+            for f in frauds:
+                dt = format_datetime(f['date'])
+                report_lines.append(f"• {dt} | {f['group']}")
+                report_lines.append(f"  👤 {f['user']}")
+                report_lines.append(f"  🧾 <code>{f['op']}</code>")
+                report_lines.append("")
+                
+            report = "\n".join(report_lines)
+            
+            # Split if too long
+            if len(report) > 4000:
+                report = report[:4000] + "\n...(обрезано)"
+                
+            await message.answer(report, parse_mode="HTML")
+
+    except Exception as e:
+        logger.error(f"Fraud check error: {e}")
+        await message.answer(f"❌ Ошибка проверки: {e}")
+    
+    await state.clear()
+
+
+@admin_router.message(Command("backfill_receipts"))
+async def backfill_receipts_command(message: types.Message):
+    """Backfill missing receipt numbers from files (Feb 2026+)"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён.")
+        return
+
+    await message.answer("⏳ Начинаю сканирование старых чеков (с 01.02.2026)...")
+    
+    try:
+        # Get candidates: KZ payments (0%), since Feb 1st, with file but no op number
+        candidates = await db.get_payments_without_op_number(region='kz', start_date='2026-02-01')
+        
+        if not candidates:
+            await message.answer("✅ Нет чеков для обработки.")
+            return
+
+        total = len(candidates)
+        await message.answer(f"Найдено {total} чеков. Обработка...")
+        
+        import tempfile
+        import os
+        from bot.utils.receipt_parser import parse_kaspi_receipt
+        
+        updated_count = 0
+        failed_count = 0
+        
+        for i, p in enumerate(candidates, 1):
+            try:
+                # Progress update every 5 items
+                if i % 5 == 0:
+                   await message.bot.send_chat_action(message.chat.id, "typing")
+                   
+                file_id = p['receipt_file_id']
+                payment_id = p['payment_id']
+                
+                # Download
+                file = await message.bot.get_file(file_id)
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
+                    temp_name = temp_file.name
+                
+                await message.bot.download_file(file.file_path, temp_name)
+                
+                # Parse
+                op_number = parse_kaspi_receipt(temp_name)
+                
+                try:
+                    os.remove(temp_name)
+                except OSError:
+                    pass
+                
+                if op_number:
+                    await db.update_payment_op_number(payment_id, op_number)
+                    updated_count += 1
+                else:
+                    failed_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Backfill error payment {p.get('payment_id')}: {e}")
+                failed_count += 1
+
+        await message.answer(
+            f"🏁 <b>Обработка завершена</b>\n\n"
+            f"Всего: {total}\n"
+            f"✅ Распознано: {updated_count}\n"
+            f"❌ Не распознано: {failed_count}",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Backfill fatal error: {e}")
+        await message.answer(f"❌ Критическая ошибка: {e}")

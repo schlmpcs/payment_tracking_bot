@@ -13,6 +13,7 @@ from bot.database.operations import Database
 from bot.config.settings import Settings
 from bot.utils.states import PaymentStates, JoinStates
 from bot.utils.keyboards import get_months_keyboard, get_user_main_menu, get_unregistered_user_menu
+from bot.utils.receipt_parser import parse_kaspi_receipt
 from bot.utils.helpers import (
     format_date, calculate_days_until,
     get_payment_status_emoji, get_payment_status_text,
@@ -798,6 +799,103 @@ async def forward_receipt_to_storage(message: types.Message, user_info: dict, pa
 async def process_receipt_upload(message: types.Message, state: FSMContext, file_id: str):
     """Process receipt upload and record payment"""
     try:
+        user_id = message.from_user.id
+        data = await state.get_data()
+        months = data.get('months', 1)
+
+        # Get user's current status (to get group_id)
+        status = await db.get_user_payment_status(user_id)
+        if not status:
+            await message.answer(
+                "❌ Не удается получить информацию о ваших платежах.\n"
+                "Пожалуйста, обратитесь к администратору.",
+                reply_markup=get_user_main_menu()
+            )
+            await state.clear()
+            return
+
+        # Download file for parsing
+        file = await message.bot.get_file(file_id)
+        file_path = file.file_path
+        
+        # Create temp file
+        import tempfile
+        import os
+        from bot.utils.receipt_parser import parse_kaspi_receipt
+        
+        # Use temp file
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
+            temp_file_name = temp_file.name
+        
+        # Download
+        await message.bot.download_file(file_path, temp_file_name)
+        
+        # Parse
+        op_number = parse_kaspi_receipt(temp_file_name)
+        
+        # Cleanup
+        try:
+            os.remove(temp_file_name)
+        except OSError:
+            pass
+
+        # Record payment
+        success, next_date = await db.add_payment(
+            user_id, status.group_id, months, file_id, op_number
+        )
+
+        if success:
+            response = (
+                f"✅ <b>Платёж успешно принят!</b>\n\n"
+                f"📅 Оплачено месяцев: <b>{months}</b>\n"
+                f"📅 Следующий платёж: <b>{format_date(next_date)}</b>\n"
+            )
+            
+            if op_number:
+                response += f"🔢 Номер операции: <code>{op_number}</code>\n"
+            else:
+                response += f"⚠️ <b>Предупреждение:</b> Не удалось распознать номер квитанции автоматически.\n"
+
+            response += "\nСпасибо за своевременную оплату!"
+
+            await message.answer(
+                response,
+                parse_mode="HTML",
+                reply_markup=get_user_main_menu()
+            )
+
+            # Forward receipt to storage
+            user_info = {
+                'id': user_id,
+                'username': message.from_user.username,
+                'first_name': message.from_user.first_name
+            }
+            payment_info = {
+                'months': months,
+                'group_name': status.group_name,
+                'next_payment_date': next_date,
+                'op_number': op_number
+            }
+            
+            await forward_receipt_to_storage(message, user_info, payment_info)
+            
+            logger.info(
+                f"Payment processed for user {user_id}: {months} months, next due {next_date}, op_number: {op_number}")
+        else:
+             await message.answer(
+                "❌ Произошла ошибка при сохранении платежа. Пожалуйста, попробуйте снова.",
+                reply_markup=get_user_main_menu()
+            )
+
+        await state.clear()
+
+    except Exception as e:
+        logger.error(f"Error processing receipt for user {message.from_user.id}: {e}")
+        await message.answer(
+            "❌ Произошла ошибка при обработке чека. Пожалуйста, попробуйте снова.",
+            reply_markup=get_user_main_menu()
+        )
+        await state.clear()
         data = await state.get_data()
         months = data.get('months')
 

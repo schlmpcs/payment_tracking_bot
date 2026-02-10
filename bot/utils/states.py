@@ -31,3 +31,4 @@ class AdminStates(StatesGroup):
     updating_due_date_date = State()
     importing_groups_file = State()
     importing_groups_confirm = State()
+    fraud_check_file = State()

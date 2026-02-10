@@ -139,6 +139,18 @@ class Database:
                 for index_sql in INDEXES:
                     await conn.execute(index_sql)
 
+                # Check if payments table has receipt_op_number column
+                payments_has_op_number = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'payments' AND column_name = 'receipt_op_number'
+                    )
+                """)
+
+                if not payments_has_op_number:
+                    self.logger.info("🔄 Adding receipt_op_number column to payments table...")
+                    await conn.execute("ALTER TABLE payments ADD COLUMN receipt_op_number VARCHAR(50)")
+
                 self.logger.info("✅ Database tables initialized successfully")
                 return True
 
@@ -667,7 +679,7 @@ class Database:
             return None
 
     # Payment operations
-    async def add_payment(self, user_id: int, group_id: int, months_paid: int, receipt_file_id: Optional[str] = None) -> Tuple[bool, Optional[datetime]]:
+    async def add_payment(self, user_id: int, group_id: int, months_paid: int, receipt_file_id: Optional[str] = None, receipt_op_number: Optional[str] = None) -> Tuple[bool, Optional[datetime]]:
         """Record a payment and return success status with next payment date
         
         Returns:
@@ -717,10 +729,10 @@ class Database:
 
                 await conn.execute(
                     """
-                    INSERT INTO payments (user_id, group_id, months_paid, payment_date, next_payment_date, receipt_file_id)
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    INSERT INTO payments (user_id, group_id, months_paid, payment_date, next_payment_date, receipt_file_id, receipt_op_number)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     """,
-                    user_id, group_id, months_paid, current_payment_date, next_payment_date, receipt_file_id
+                    user_id, group_id, months_paid, current_payment_date, next_payment_date, receipt_file_id, receipt_op_number
                 )
 
                 self.logger.info(
@@ -729,6 +741,61 @@ class Database:
         except Exception as e:
             self.logger.error(f"Failed to add payment for user {user_id}: {e}")
             return False, None
+
+    async def update_payment_op_number(self, payment_id: int, op_number: str) -> bool:
+        """Update payment with extracted operation number"""
+        if not self.pool:
+            return False
+
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE payments 
+                    SET receipt_op_number = $1
+                    WHERE payment_id = $2
+                    """,
+                    op_number, payment_id
+                )
+                return True
+        except Exception as e:
+            self.logger.error(f"Failed to update op number for payment {payment_id}: {e}")
+            return False
+
+    async def get_payments_without_op_number(self, region: str = 'kz', start_date: str = '2026-02-01') -> List[dict]:
+        """Get payments that have a receipt file but no op number"""
+        if not self.pool:
+            return []
+
+        try:
+            # Convert string date to datetime.date object
+            if isinstance(start_date, str):
+                start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
+            else:
+                start_date_obj = start_date
+
+            async with self.pool.acquire() as conn:
+                # Filter by region based on group display_id pattern
+                # Groups starting with '0' are KZ, '1' are RU
+                display_id_pattern = '1%' if region == 'ru' else '0%'
+                
+                rows = await conn.fetch(
+                    """
+                    SELECT p.payment_id, p.receipt_file_id, g.group_name
+                    FROM payments p
+                    JOIN groups g ON p.group_id = g.group_id
+                    WHERE p.receipt_file_id IS NOT NULL 
+                    AND p.receipt_op_number IS NULL
+                    AND p.payment_date >= $1
+                    AND g.display_id LIKE $2
+                    ORDER BY p.payment_date
+                    """,
+                    start_date_obj, display_id_pattern
+                )
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self.logger.error(f"Failed to get payments for backfill: {e}")
+            return []
 
     async def get_user_payment_status(self, user_id: int) -> Optional[PaymentStatus]:
         """Get user's current payment status"""

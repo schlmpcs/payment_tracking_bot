@@ -34,6 +34,7 @@ class Payment(NamedTuple):
     payment_date: datetime
     next_payment_date: datetime
     receipt_file_id: Optional[str] = None
+    receipt_op_number: Optional[str] = None
 
 
 class PaymentStatus(NamedTuple):
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS payments (
     payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     next_payment_date TIMESTAMP NOT NULL,
     receipt_file_id VARCHAR(200),
+    receipt_op_number VARCHAR(50),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE
 );
