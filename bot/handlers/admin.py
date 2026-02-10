@@ -1822,12 +1822,52 @@ async def fraud_check_command(message: types.Message, state: FSMContext):
 
     await message.answer(
         "🕵️‍♀️ <b>Проверка на мошенничество (Fraud Check)</b>\n\n"
-        "Пожалуйста, отправьте файл выписки Kaspi (Excel .xlsx или .csv).\n"
+        "Пожалуйста, введите <b>дату начала</b> проверки в формате <b>ДД.ММ</b>\n"
+        "(Например: <code>01.02</code> для 1 февраля текущего года).\n\n"
         "Бот сверит операции из выписки с базой данных (только для групп Казахстана).\n\n"
         "💡 <i>Используйте /admin для отмены</i>",
         parse_mode="HTML"
     )
-    await state.set_state(AdminStates.fraud_check_file)
+    await state.set_state(AdminStates.fraud_check_date)
+
+
+@admin_router.message(StateFilter(AdminStates.fraud_check_date))
+async def fraud_check_date_process(message: types.Message, state: FSMContext):
+    """Process date input for fraud check"""
+    try:
+        # Parse date. format is DD.MM
+        date_str = message.text.strip()
+        parts = date_str.split('.')
+        # Allow DD.MM.YYYY too
+        year = get_now().year
+        
+        day = int(parts[0])
+        month = int(parts[1])
+        if len(parts) == 3:
+            year = int(parts[2])
+            
+        # Create date object
+        start_date = datetime(year, month, day, 0, 0, 0)
+        
+        # Save to state (store as string isoformat)
+        await state.update_data(fraud_check_start_date=start_date.isoformat())
+        
+        # Format for nicer display
+        display_date = f"{day:02d}.{month:02d}.{year}"
+        
+        await message.answer(
+            f"✅ Дата начала установлена: <b>{display_date}</b>\n\n"
+            "📥 Теперь отправьте файл выписки Kaspi (Excel .xlsx или .csv).",
+            parse_mode="HTML"
+        )
+        await state.set_state(AdminStates.fraud_check_file)
+        
+    except Exception as e:
+        await message.answer(
+            "❌ <b>Неверный формат даты!</b>\n"
+            "Используйте формат <code>ДД.ММ</code> (например: <code>01.02</code>).\n"
+            "Попробуйте снова."
+        )
 
 
 @admin_router.message(StateFilter(AdminStates.fraud_check_file), F.document)
@@ -1842,7 +1882,18 @@ async def fraud_check_process(message: types.Message, state: FSMContext):
         )
         return
 
-    await message.answer("⏳ Обработка файла и сверка данных...")
+    # Retrieve date from state
+    data = await state.get_data()
+    start_date_iso = data.get('fraud_check_start_date')
+    
+    if start_date_iso:
+        current_month_start = datetime.fromisoformat(start_date_iso)
+    else:
+        # Fallback (should not happen normally)
+        current_month_start = get_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    start_date_display = current_month_start.strftime("%d.%m.%Y")
+    await message.answer(f"⏳ Обработка файла и сверка данных с {start_date_display}...")
 
     import tempfile
     import os
