@@ -108,4 +108,3 @@ python main.py
 Feel free to fork and submit PRs! Run tests locally before pushing.
 
 ---
-*Developed by [Your Name]*

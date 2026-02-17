@@ -76,7 +76,7 @@ class NotificationScheduler:
                 # Wait 1 hour before retrying on error
                 await asyncio.sleep(3600)
 
-    async def _run_notification_checks(self):
+    async def _run_notification_checks(self, include_groups: bool = True):
         """Run all notification checks"""
         self.logger.info("🔍 Running daily notification checks...")
 
@@ -85,7 +85,8 @@ class NotificationScheduler:
             await self._send_user_reminders()
 
             # Send group reminders (to linked Telegram groups)
-            await self._send_group_reminders()
+            if include_groups:
+                await self._send_group_reminders()
 
             # Send admin warnings (3 days after due date)
             await self._send_admin_warnings()
@@ -133,7 +134,7 @@ class NotificationScheduler:
                     # Payment due TODAY
                     reminder_text = (
                         f"⏰ <b>НАПОМИНАНИЕ ОБ ОПЛАТЕ</b>\n\n"
-                        f"🔴 Ваш платёж за Spotify для группы <b>{status.group_name}</b> должен быть совершён <b>СЕГОДНЯ</b>!\n\n"
+                        f"🔴 Ваш платёж за Spotify для группы <b>{status.group_name}</b> должен быть совершён <b>сегодня</b>!\n\n"
                         f"📅 <b>Дата платежа:</b> {format_date(status.next_payment_date)}\n"
                         f"💰 <b>Сумма:</b> {price} {currency}\n\n"
                         f"{payment_text}\n\n"
@@ -153,29 +154,17 @@ class NotificationScheduler:
                         f"📊 <b>Проверить статус:</b> Используйте команду /status\n\n"
                         f"🚨 Пожалуйста, оплатите как можно скорее, чтобы избежать отключения!"
                     )
-                elif days_overdue == 2:
-                    # 2 days overdue - FINAL REMINDER
-                    reminder_text = (
-                        f"🚨 <b>ПЛАТЁЖ ПРОСРОЧЕН</b>\n\n"
-                        f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>23 дня</b>!\n\n"
-                        f"📅 <b>Срок был:</b> {format_date(status.next_payment_date)}\n"
-                        f"💰 <b>Сумма:</b> {price} {currency}\n\n"
-                        f"{payment_text}\n\n"
-                        f"💡 <b>Для оплаты:</b> Используйте команду /pay и загрузите чек\n\n"
-                        f"⛔ <b>ВНИМАНИЕ:</b> Если оплата не будет получена завтра, администратор будет уведомлён, "
-                        f"и вы можете быть удалены из группы!\n\n"
-                        f"🆘 Пожалуйста, совершите платёж сегодня, чтобы сохранить доступ к Spotify!"
-                    )
-                elif days_overdue == 3:
-                     # 3 days overdue - CRITICAL
+                elif days_overdue == 2 or days_overdue == 3:
+                     # 2 or 3 days overdue - CRITICAL
                     reminder_text = (
                         f"❌ <b>ПЛАТЁЖ ПРОСРОЧЕН</b>\n\n"
-                        f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>3 дня</b>.\n\n"
+                        f"Ваш платёж за Spotify для группы <b>{status.group_name}</b> просрочен на <b>{days_overdue} дня</b>.\n\n"
                         f"📅 <b>Срок был:</b> {format_date(status.next_payment_date)}\n"
                         f"💰 <b>Сумма:</b> {price} {currency}\n\n"
                         f"{payment_text}\n\n"
-                        f"⚠️ <b>Администратор был уведомлён о вашей задолженности.</b>\n"
-                        f"🆘 <b>Пожалуйста, совершите платёж сегодня, чтобы сохранить доступ к Spotify!</b>"
+                        f"⚠️ <b>Администратор был уведомлён о вашей задолженности.</b>\n\n"
+                        f"❗️ <b>В случае отключения подписки, для повторного подключения необходимо будет оплатить штраф в размере 150 ₸.</b>\n\n"
+                        f"🆘 Пожалуйста, совершите платёж сегодня!"
                     )
                 else:
                     # Skip if outside 0-3 range (shouldn't happen with query filter)
@@ -270,7 +259,7 @@ class NotificationScheduler:
         if not self.db or not self.db.pool:
             return
 
-        warning_days = 3  # 3 days after due date
+        warning_days = 2  # 2 days after due date
         overdue_users = await self.db.get_users_overdue_for_admin_warning(warning_days)
 
         if not overdue_users:
@@ -334,4 +323,4 @@ class NotificationScheduler:
     async def send_test_notifications(self):
         """Send test notifications (for debugging)"""
         self.logger.info("🧪 Отправка тестовых уведомлений...")
-        await self._run_notification_checks()
+        await self._run_notification_checks(include_groups=False)
