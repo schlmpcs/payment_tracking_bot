@@ -33,3 +33,5 @@ class AdminStates(StatesGroup):
     importing_groups_confirm = State()
     fraud_check_date = State()
     fraud_check_file = State()
+    broadcasting_message = State()
+    broadcasting_confirm = State()

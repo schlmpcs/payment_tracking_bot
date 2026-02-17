@@ -3,6 +3,7 @@ Admin command handlers for the Spotify Payment Bot
 """
 
 import logging
+import asyncio
 import tempfile
 import os
 from datetime import datetime, timedelta
@@ -135,6 +136,185 @@ async def link_group_command(message: types.Message):
             "❌ Не удалось привязать группу. Попробуйте позже.",
             parse_mode="HTML"
         )
+
+
+@admin_router.message(Command("broadcast"))
+async def broadcast_command(message: types.Message, state: FSMContext):
+    """Handle /broadcast command"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+
+    # Clear previous state
+    await state.clear()
+
+    # Create keyboard for target selection
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🌍 Все пользователи", callback_data="broadcast_target_all")
+    builder.button(text="🇰🇿 Казахстан (KZ)", callback_data="broadcast_target_kz")
+    builder.button(text="🇷🇺 Россия (RU)", callback_data="broadcast_target_ru")
+    builder.adjust(1)
+
+    await message.answer(
+        "📢 <b>Рассылка сообщений</b>\n\n"
+        "Выберите целевую аудиторию для рассылки:",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminStates.broadcasting_message)
+
+
+@admin_router.callback_query(F.data.startswith("broadcast_target_"))
+async def broadcast_target_selection(callback: types.CallbackQuery, state: FSMContext):
+    """Handle broadcast target selection"""
+    target = callback.data.split("_")[-1]  # all, kz, ru
+
+    target_names = {
+        'all': "Все пользователи",
+        'kz': "Казахстан (KZ)",
+        'ru': "Россия (RU)"
+    }
+
+    await state.update_data(broadcast_target=target)
+    # We are already in broadcasting_message state from command, but let's reinforce it
+    await state.set_state(AdminStates.broadcasting_confirm) # Actually wait, we need message first
+
+    await callback.message.edit_text(
+        f"📢 <b>Рассылка: {target_names.get(target, target)}</b>\n\n"
+        f"Теперь отправьте сообщение, которое вы хотите разослать.\n"
+        f"Поддерживается текст, фото и форматирование.\n\n"
+        f"❌ Отправьте /cancel для отмены.",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminStates.broadcasting_message)
+    await callback.answer()
+
+
+@admin_router.message(StateFilter(AdminStates.broadcasting_message))
+async def broadcast_message_input(message: types.Message, state: FSMContext):
+    """Handle broadcast message input and show preview"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
+    if message.text and message.text.startswith('/cancel'):
+        await state.clear()
+        await message.answer("❌ Рассылка отменена.")
+        return
+
+    # Save message content details to state
+    await state.update_data(
+        message_id=message.message_id,
+        chat_id=message.chat.id
+    )
+
+    # Show preview
+    try:
+        await message.answer("📝 <b>Предпросмотр сообщения:</b>", parse_mode="HTML")
+        # Copy the message back to user as preview
+        await message.send_copy(chat_id=message.chat.id)
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка предпросмотра: {e}")
+        return
+
+    # Confirmation keyboard
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Отправить", callback_data="broadcast_confirm")
+    builder.button(text="❌ Отменить", callback_data="broadcast_cancel")
+    builder.adjust(2)
+
+    data = await state.get_data()
+    target = data.get('broadcast_target')
+    target_names = {
+        'all': "Все пользователи",
+        'kz': "Казахстан (KZ)",
+        'ru': "Россия (RU)"
+    }
+
+    await message.answer(
+        f"❓ <b>Подтверждение рассылки</b>\n\n"
+        f"🎯 Целевая аудитория: <b>{target_names.get(target, target)}</b>\n"
+        f"📤 Это сообщение будет отправлено всем выбранным пользователям.\n\n"
+        f"Подтверждаете отправку?",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminStates.broadcasting_confirm)
+
+
+@admin_router.callback_query(StateFilter(AdminStates.broadcasting_confirm))
+async def broadcast_confirmation_handler(callback: types.CallbackQuery, state: FSMContext):
+    """Handle broadcast confirmation"""
+    if callback.data == "broadcast_cancel":
+        await state.clear()
+        await callback.message.edit_text("❌ Рассылка отменена.")
+        await callback.answer()
+        return
+
+    if callback.data == "broadcast_confirm":
+        data = await state.get_data()
+        target = data.get('broadcast_target')
+        message_id = data.get('message_id')
+        chat_id = data.get('chat_id')
+
+        await callback.message.edit_text(
+            f"⏳ <b>Начинаю рассылку...</b>\n"
+            f"Пожалуйста, не используйте бота до завершения операции.",
+            parse_mode="HTML"
+        )
+
+        try:
+            # Get users
+            users = await db.get_users_by_region(target)
+
+            if not users:
+                await callback.message.edit_text("❌ Пользователи не найдены для выбранной категории.")
+                await state.clear()
+                return
+
+            success_count = 0
+            fail_count = 0
+            total = len(users)
+            
+            # Simple progress update every 10 users
+            last_edit_time = datetime.now()
+
+            for i, user_id in enumerate(users):
+                try:
+                    await callback.bot.copy_message(
+                        chat_id=user_id,
+                        from_chat_id=chat_id,
+                        message_id=message_id
+                    )
+                    success_count += 1
+                except Exception as e:
+                    fail_count += 1
+                    logger.error(f"Failed to broadcast to {user_id}: {e}")
+
+                # Avoid hitting limits too hard
+                await asyncio.sleep(0.05) 
+
+            await callback.message.answer(
+                f"✅ <b>Рассылка завершена!</b>\n\n"
+                f"👥 Всего пользователей: {total}\n"
+                f"📤 Успешно отправлено: {success_count}\n"
+                f"⚠️ Не удалось отправить: {fail_count}",
+                parse_mode="HTML"
+            )
+
+        except Exception as e:
+            logger.error(f"Broadcast failed: {e}")
+            await callback.message.answer(f"❌ Ошибка при рассылке: {e}")
+
+        await state.clear()
+        await callback.answer()
 
 
 @admin_router.message(Command("check_notifications"))
