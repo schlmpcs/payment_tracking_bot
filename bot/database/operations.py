@@ -1428,3 +1428,61 @@ class Database:
         except Exception as e:
             self.logger.error(f"Failed to get users for region {region}: {e}")
             return []
+
+    async def get_users_paid_in_advance(self) -> List[dict]:
+        """Get users who have paid in advance (next_payment_date > today + 32 days)"""
+        if not self.pool:
+            return []
+
+        try:
+            async with self.pool.acquire() as conn:
+                # We consider "paid in advance" as having next_payment_date more than 32 days from now
+                # This filters out people who just paid for the current/upcoming month
+                future_date = get_now().date() + timedelta(days=32)
+                
+                rows = await conn.fetch(
+                    """
+                    SELECT 
+                        u.user_id, u.username, u.first_name,
+                        g.group_name, g.display_id,
+                        p.next_payment_date
+                    FROM payments p
+                    JOIN users u ON p.user_id = u.user_id
+                    JOIN groups g ON p.group_id = g.group_id
+                    WHERE p.next_payment_date > $1
+                    -- Get only the latest payment status per user/group
+                    AND p.payment_date = (
+                        SELECT MAX(payment_date) 
+                        FROM payments p2 
+                        WHERE p2.user_id = p.user_id AND p2.group_id = p.group_id
+                    )
+                    ORDER BY p.next_payment_date DESC
+                    """,
+                    future_date
+                )
+                
+                results = []
+                for row in rows:
+                    # Calculate months ahead approximately
+                    next_payment_date = row['next_payment_date']
+                    if isinstance(next_payment_date, datetime):
+                        next_payment_date = next_payment_date.date()
+
+                    days_ahead = (next_payment_date - get_now().date()).days
+                    months_ahead = round(days_ahead / 30)
+                    
+                    results.append({
+                        'user_id': row['user_id'],
+                        'name': row['first_name'] or row['username'] or "Unknown",
+                        'username': row['username'],
+                        'group_name': row['group_name'],
+                        'group_id': row['display_id'],
+                        'paid_until': row['next_payment_date'],
+                        'months_ahead': months_ahead
+                    })
+                    
+                return results
+
+        except Exception as e:
+            self.logger.error(f"Failed to get users paid in advance: {e}")
+            return []

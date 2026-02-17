@@ -505,6 +505,86 @@ async def update_due_date_command(message: types.Message, state: FSMContext):
     await state.set_state(AdminStates.updating_due_date_group)
 
 
+@admin_router.message(Command("paid_in_advance"))
+async def paid_in_advance_command(message: types.Message):
+    """List users who have paid for future months"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
+        return
+
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.")
+        return
+
+    # Get data
+    users = await db.get_users_paid_in_advance()
+
+    if not users:
+        await message.answer("📊 Нет пользователей, оплативших наперед (более чем на месяц).")
+        return
+
+    # Group by payment group (e.g. Spotify 001)
+    grouped_users = {}
+    for user in users:
+        group_id = user['group_id']
+        if group_id not in grouped_users:
+            grouped_users[group_id] = {
+                'name': user['group_name'],
+                'users': []
+            }
+        grouped_users[group_id]['users'].append(user)
+
+    # Format output
+    response = "💎 <b>Пользователи, оплатившие наперед:</b>\n"
+    
+    # Sort groups by ID
+    sorted_group_ids = sorted(grouped_users.keys())
+
+    for group_id in sorted_group_ids:
+        group_data = grouped_users[group_id]
+        response += f"\n📁 <b>{group_data['name']}</b>\n"
+        
+        for user in group_data['users']:
+            username_link = f"@{user['username']}" if user['username'] else f"ID: {user['user_id']}"
+            months = user['months_ahead']
+            
+            # Choose specific emoji based on months ahead
+            if months >= 6:
+                status_emoji = "🌟" # 6+ months
+            elif months >= 3:
+                status_emoji = "⭐" # 3-5 months
+            else:
+                status_emoji = "🔹" # 1-2 months
+
+            response += (
+                f"{status_emoji} <b>{user['name']}</b> ({username_link})\n"
+                f"   📅 До: {format_date(user['paid_until'])} (+{months} мес.)\n"
+            )
+
+    # Split message if too long (Telegram limit is 4096 chars)
+    if len(response) > 4000:
+        parts = []
+        while len(response) > 0:
+            if len(response) > 4000:
+                split_idx = response[:4000].rfind('\n')
+                if split_idx == -1: split_idx = 4000
+                parts.append(response[:split_idx])
+                response = response[split_idx:]
+            else:
+                parts.append(response)
+                response = ""
+        
+        for part in parts:
+            await message.answer(part, parse_mode="HTML")
+    else:
+        await message.answer(response, parse_mode="HTML")
+
+
+
 @admin_router.callback_query(F.data == "admin_view_groups")
 async def view_groups(callback: types.CallbackQuery):
     """View all payment groups with fill status summary - page 0"""
