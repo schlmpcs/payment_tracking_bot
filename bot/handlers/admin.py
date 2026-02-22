@@ -6,6 +6,7 @@ import logging
 import asyncio
 import tempfile
 import os
+from html import escape
 from datetime import datetime, timedelta
 from aiogram import Router, types, F
 from aiogram.filters import Command, StateFilter
@@ -31,6 +32,10 @@ logger = logging.getLogger(__name__)
 # Global database instance (will be injected)
 db: Database = None
 settings: Settings = None
+
+PAID_IN_ADVANCE_MIN_DAYS = 32
+PAID_IN_ADVANCE_PAGE_SIZE = 12
+PAID_IN_ADVANCE_SORT = "group_then_paid_until_desc"
 
 
 def init_admin_handlers(database: Database, bot_settings: Settings):
@@ -520,69 +525,104 @@ async def paid_in_advance_command(message: types.Message):
         await message.answer("❌ База данных в настоящее время недоступна.")
         return
 
-    # Get data
-    users = await db.get_users_paid_in_advance()
-
-    if not users:
-        await message.answer("📊 Нет пользователей, оплативших наперед (более чем на месяц).")
+    response, keyboard = await build_paid_in_advance_page(page=0)
+    if not response:
+        await message.answer("No users paid in advance.")
         return
 
-    # Group by payment group (e.g. Spotify 001)
+    await message.answer(response, parse_mode="HTML", reply_markup=keyboard)
+    return
+
+@admin_router.callback_query(F.data.startswith("paid_in_advance_page_"))
+async def paid_in_advance_page_handler(callback: types.CallbackQuery):
+    """Handle pagination for paid-in-advance view."""
+    user_id = callback.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        await callback.answer("Access denied", show_alert=True)
+        return
+
+    if not db or not db.pool:
+        await callback.answer("Database unavailable", show_alert=True)
+        return
+
+    try:
+        page = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Invalid page", show_alert=True)
+        return
+
+    response, keyboard = await build_paid_in_advance_page(page=page)
+    if not response:
+        await callback.message.edit_text("No users paid in advance.")
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(response, parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
+
+
+async def build_paid_in_advance_page(page: int = 0):
+    """Build one page of users paid in advance and pagination keyboard."""
+    total_users = await db.count_users_paid_in_advance(
+        min_days_ahead=PAID_IN_ADVANCE_MIN_DAYS
+    )
+    if total_users <= 0:
+        return None, None
+
+    total_pages = max(1, (total_users + PAID_IN_ADVANCE_PAGE_SIZE - 1) // PAID_IN_ADVANCE_PAGE_SIZE)
+    current_page = min(max(0, page), total_pages - 1)
+
+    users = await db.get_users_paid_in_advance(
+        min_days_ahead=PAID_IN_ADVANCE_MIN_DAYS,
+        page=current_page,
+        page_size=PAID_IN_ADVANCE_PAGE_SIZE,
+        sort_by=PAID_IN_ADVANCE_SORT
+    )
+    if not users:
+        return None, None
+
     grouped_users = {}
     for user in users:
         group_id = user['group_id']
         if group_id not in grouped_users:
-            grouped_users[group_id] = {
-                'name': user['group_name'],
-                'users': []
-            }
+            grouped_users[group_id] = {'name': user['group_name'], 'users': []}
         grouped_users[group_id]['users'].append(user)
 
-    # Format output
-    response = "💎 <b>Пользователи, оплатившие наперед:</b>\n"
-    
-    # Sort groups by ID
-    sorted_group_ids = sorted(grouped_users.keys())
+    groups_on_page = len(grouped_users)
+    response = (
+        f"<b>Users Paid In Advance</b>\n"
+        f"Rule: next payment is more than {PAID_IN_ADVANCE_MIN_DAYS} days away\n"
+        f"Total users: {total_users} | Groups on this page: {groups_on_page}\n"
+        f"Page: {current_page + 1}/{total_pages}\n"
+    )
 
-    for group_id in sorted_group_ids:
+    for group_id in sorted(grouped_users.keys()):
         group_data = grouped_users[group_id]
-        response += f"\n📁 <b>{group_data['name']}</b>\n"
-        
+        response += f"\n<b>{escape(str(group_data['name']))}</b> (ID: {escape(str(group_id))})\n"
+
         for user in group_data['users']:
-            username_link = f"@{user['username']}" if user['username'] else f"ID: {user['user_id']}"
+            username_link = f"@{escape(user['username'])}" if user['username'] else f"ID: {user['user_id']}"
             months = user['months_ahead']
-            
-            # Choose specific emoji based on months ahead
+
             if months >= 6:
-                status_emoji = "🌟" # 6+ months
+                status_emoji = "🌟"
             elif months >= 3:
-                status_emoji = "⭐" # 3-5 months
+                status_emoji = "⭐"
             else:
-                status_emoji = "🔹" # 1-2 months
+                status_emoji = "🔹"
 
             response += (
-                f"{status_emoji} <b>{user['name']}</b> ({username_link})\n"
-                f"   📅 До: {format_date(user['paid_until'])} (+{months} мес.)\n"
+                f"{status_emoji} <b>{escape(str(user['name']))}</b> ({username_link})\n"
+                f"   Paid until: {format_date(user['paid_until'])} (+{months} months)\n"
             )
 
-    # Split message if too long (Telegram limit is 4096 chars)
-    if len(response) > 4000:
-        parts = []
-        while len(response) > 0:
-            if len(response) > 4000:
-                split_idx = response[:4000].rfind('\n')
-                if split_idx == -1: split_idx = 4000
-                parts.append(response[:split_idx])
-                response = response[split_idx:]
-            else:
-                parts.append(response)
-                response = ""
-        
-        for part in parts:
-            await message.answer(part, parse_mode="HTML")
-    else:
-        await message.answer(response, parse_mode="HTML")
-
+    keyboard = get_pagination_keyboard(
+        current_page,
+        total_pages,
+        "paid_in_advance",
+        show_back=True
+    )
+    return response, keyboard
 
 
 @admin_router.callback_query(F.data == "admin_view_groups")

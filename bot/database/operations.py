@@ -1429,58 +1429,170 @@ class Database:
             self.logger.error(f"Failed to get users for region {region}: {e}")
             return []
 
-    async def get_users_paid_in_advance(self) -> List[dict]:
-        """Get users who have paid in advance (next_payment_date > today + 32 days)"""
+    async def get_users_by_group(self, group_id: int) -> List[int]:
+        """Get all user IDs by specific group"""
         if not self.pool:
             return []
 
         try:
             async with self.pool.acquire() as conn:
-                # We consider "paid in advance" as having next_payment_date more than 32 days from now
-                # This filters out people who just paid for the current/upcoming month
-                future_date = get_now().date() + timedelta(days=32)
-                
-                rows = await conn.fetch(
+                query = """
+                    SELECT u.user_id 
+                    FROM users u
+                    JOIN user_groups ug ON u.user_id = ug.user_id
+                    WHERE ug.group_id = $1
+                """
+                rows = await conn.fetch(query, group_id)
+                return [row['user_id'] for row in rows]
+        except Exception as e:
+            self.logger.error(f"Failed to get users for group {group_id}: {e}")
+            return []
+
+    async def count_users_paid_in_advance(self, min_days_ahead: int = 32) -> int:
+        """Count users whose latest next_payment_date is farther than min_days_ahead."""
+        if not self.pool:
+            return 0
+
+        try:
+            async with self.pool.acquire() as conn:
+                future_date = get_now().date() + timedelta(days=max(0, min_days_ahead))
+                count = await conn.fetchval(
                     """
-                    SELECT 
-                        u.user_id, u.username, u.first_name,
-                        g.group_name, g.display_id,
-                        p.next_payment_date
-                    FROM payments p
-                    JOIN users u ON p.user_id = u.user_id
-                    JOIN groups g ON p.group_id = g.group_id
-                    WHERE p.next_payment_date > $1
-                    -- Get only the latest payment status per user/group
-                    AND p.payment_date = (
-                        SELECT MAX(payment_date) 
-                        FROM payments p2 
-                        WHERE p2.user_id = p.user_id AND p2.group_id = p.group_id
+                    WITH latest_payments AS (
+                        SELECT
+                            p.user_id,
+                            p.group_id,
+                            p.next_payment_date,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY p.user_id, p.group_id
+                                ORDER BY p.payment_date DESC, p.payment_id DESC
+                            ) AS row_num
+                        FROM payments p
                     )
-                    ORDER BY p.next_payment_date DESC
+                    SELECT COUNT(*)
+                    FROM latest_payments lp
+                    WHERE lp.row_num = 1
+                    AND lp.next_payment_date > $1
                     """,
                     future_date
                 )
-                
+                return int(count or 0)
+        except Exception as e:
+            self.logger.error(f"Failed to count users paid in advance: {e}")
+            return 0
+
+    async def get_users_paid_in_advance(
+        self,
+        min_days_ahead: int = 32,
+        page: int = 0,
+        page_size: Optional[int] = None,
+        sort_by: str = "group_then_paid_until_desc"
+    ) -> List[dict]:
+        """
+        Get users who have paid in advance.
+
+        Args:
+            min_days_ahead: Minimum days from today for next_payment_date to qualify.
+            page: Zero-based page index (used only when page_size is provided).
+            page_size: Number of rows per page; if None returns all rows.
+            sort_by: One of:
+                - 'group_then_paid_until_desc' (default)
+                - 'paid_until_desc'
+                - 'paid_until_asc'
+                - 'name_asc'
+        """
+        if not self.pool:
+            return []
+
+        order_map = {
+            "group_then_paid_until_desc": (
+                "g.display_id ASC, lp.next_payment_date DESC, "
+                "COALESCE(u.first_name, u.username, '') ASC"
+            ),
+            "paid_until_desc": (
+                "lp.next_payment_date DESC, g.display_id ASC, "
+                "COALESCE(u.first_name, u.username, '') ASC"
+            ),
+            "paid_until_asc": (
+                "lp.next_payment_date ASC, g.display_id ASC, "
+                "COALESCE(u.first_name, u.username, '') ASC"
+            ),
+            "name_asc": (
+                "COALESCE(u.first_name, u.username, '') ASC, "
+                "g.display_id ASC, lp.next_payment_date DESC"
+            ),
+        }
+        order_clause = order_map.get(sort_by, order_map["group_then_paid_until_desc"])
+
+        normalized_page = max(0, page)
+        normalized_page_size = max(1, page_size) if page_size else None
+        offset = normalized_page * normalized_page_size if normalized_page_size else 0
+
+        try:
+            async with self.pool.acquire() as conn:
+                future_date = get_now().date() + timedelta(days=max(0, min_days_ahead))
+                base_query = f"""
+                    WITH latest_payments AS (
+                        SELECT
+                            p.user_id,
+                            p.group_id,
+                            p.payment_date,
+                            p.next_payment_date,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY p.user_id, p.group_id
+                                ORDER BY p.payment_date DESC, p.payment_id DESC
+                            ) AS row_num
+                        FROM payments p
+                    )
+                    SELECT
+                        u.user_id,
+                        u.username,
+                        u.first_name,
+                        g.group_name,
+                        g.display_id,
+                        lp.payment_date,
+                        lp.next_payment_date
+                    FROM latest_payments lp
+                    JOIN users u ON lp.user_id = u.user_id
+                    JOIN groups g ON lp.group_id = g.group_id
+                    WHERE lp.row_num = 1
+                    AND lp.next_payment_date > $1
+                    ORDER BY {order_clause}
+                """
+
+                if normalized_page_size:
+                    rows = await conn.fetch(
+                        base_query + "\nLIMIT $2 OFFSET $3",
+                        future_date,
+                        normalized_page_size,
+                        offset
+                    )
+                else:
+                    rows = await conn.fetch(base_query, future_date)
+
+                today = get_now().date()
                 results = []
                 for row in rows:
-                    # Calculate months ahead approximately
-                    next_payment_date = row['next_payment_date']
-                    if isinstance(next_payment_date, datetime):
-                        next_payment_date = next_payment_date.date()
+                    paid_until = row['next_payment_date']
+                    if isinstance(paid_until, datetime):
+                        paid_until = paid_until.date()
 
-                    days_ahead = (next_payment_date - get_now().date()).days
-                    months_ahead = round(days_ahead / 30)
-                    
+                    days_ahead = (paid_until - today).days
+                    months_ahead = max(1, (days_ahead + 29) // 30)
+
                     results.append({
                         'user_id': row['user_id'],
                         'name': row['first_name'] or row['username'] or "Unknown",
                         'username': row['username'],
                         'group_name': row['group_name'],
                         'group_id': row['display_id'],
-                        'paid_until': row['next_payment_date'],
+                        'group_display_id': row['display_id'],
+                        'paid_until': paid_until,
+                        'last_payment_date': row['payment_date'],
+                        'days_ahead': days_ahead,
                         'months_ahead': months_ahead
                     })
-                    
+
                 return results
 
         except Exception as e:
