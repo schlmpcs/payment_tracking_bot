@@ -152,11 +152,28 @@ class Database:
                     await conn.execute("ALTER TABLE payments ADD COLUMN receipt_op_number VARCHAR(50)")
 
                 self.logger.info("✅ Database tables initialized successfully")
-                return True
 
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize tables: {e}")
             return False
+
+        # Create partial unique index on receipt_op_number in a separate block so that
+        # pre-existing duplicate rows in the DB do not crash bot startup.
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_unique_op_number
+                    ON payments(receipt_op_number)
+                    WHERE receipt_op_number IS NOT NULL
+                """)
+                self.logger.info("✅ Unique index on receipt_op_number created/verified")
+        except Exception as e:
+            self.logger.warning(
+                f"⚠️ Could not create unique index on receipt_op_number "
+                f"(duplicate data may already exist — run /fraudcheck to investigate): {e}"
+            )
+
+        return True
 
     async def _migrate_display_ids(self, conn):
         """Migrate existing data to add display_ids where missing"""
@@ -698,14 +715,14 @@ class Database:
             return None
 
     # Payment operations
-    async def add_payment(self, user_id: int, group_id: int, months_paid: int, receipt_file_id: Optional[str] = None, receipt_op_number: Optional[str] = None) -> Tuple[bool, Optional[datetime]]:
-        """Record a payment and return success status with next payment date
-        
-        Returns:
-            Tuple[bool, Optional[datetime]]: (success, next_payment_date)
+    async def add_payment(self, user_id: int, group_id: int, months_paid: int, receipt_file_id: Optional[str] = None, receipt_op_number: Optional[str] = None) -> Tuple[bool, Optional[datetime], Optional[str]]:
+        """Record a payment and return (success, next_payment_date, error_reason).
+
+        error_reason is None on success, "duplicate" if the receipt op number already
+        exists in the database, or "error" for any other failure.
         """
         if not self.pool:
-            return False, None
+            return False, None, "error"
 
         try:
             async with self.pool.acquire() as conn:
@@ -756,10 +773,14 @@ class Database:
 
                 self.logger.info(
                     f"Payment recorded: User {user_id}, Group {group_id}, {months_paid} months")
-                return True, next_payment_date
+                return True, next_payment_date, None
+        except asyncpg.UniqueViolationError:
+            self.logger.warning(
+                f"Duplicate receipt op_number blocked for user {user_id} (op: {receipt_op_number})")
+            return False, None, "duplicate"
         except Exception as e:
             self.logger.error(f"Failed to add payment for user {user_id}: {e}")
-            return False, None
+            return False, None, "error"
 
     async def update_payment_op_number(self, payment_id: int, op_number: str) -> bool:
         """Update payment with extracted operation number"""

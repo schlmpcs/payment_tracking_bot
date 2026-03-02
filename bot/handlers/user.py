@@ -840,7 +840,7 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
             pass
 
         # Record payment
-        success, next_date = await db.add_payment(
+        success, next_date, error_reason = await db.add_payment(
             user_id, status.group_id, months, file_id, op_number
         )
 
@@ -850,7 +850,7 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
                 f"📅 Оплачено месяцев: <b>{months}</b>\n"
                 f"📅 Следующий платёж: <b>{format_date(next_date)}</b>\n"
             )
-            
+
             if op_number:
                 response += f"🔢 Номер операции: <code>{op_number}</code>\n"
             else:
@@ -876,13 +876,23 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
                 'next_payment_date': next_date,
                 'op_number': op_number
             }
-            
+
             await forward_receipt_to_storage(message, user_info, payment_info)
-            
+
             logger.info(
                 f"Payment processed for user {user_id}: {months} months, next due {next_date}, op_number: {op_number}")
+        elif error_reason == "duplicate":
+            await message.answer(
+                "❌ <b>Этот чек уже был загружен ранее.</b>\n\n"
+                "Номер операции из этого чека уже зарегистрирован в системе.\n"
+                "Если вы считаете, что это ошибка, обратитесь к администратору.",
+                parse_mode="HTML",
+                reply_markup=get_user_main_menu()
+            )
+            logger.warning(
+                f"Duplicate receipt submission blocked for user {user_id}, op_number: {op_number}")
         else:
-             await message.answer(
+            await message.answer(
                 "❌ Произошла ошибка при сохранении платежа. Пожалуйста, попробуйте снова.",
                 reply_markup=get_user_main_menu()
             )
@@ -914,7 +924,7 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
             return
 
         # Record payment and get the new next payment date
-        success, next_payment_date = await db.add_payment(user_id, group.group_id, months, file_id)
+        success, next_payment_date, _ = await db.add_payment(user_id, group.group_id, months, file_id)
 
         if success:
             await message.answer(
