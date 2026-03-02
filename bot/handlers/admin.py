@@ -1576,7 +1576,7 @@ async def handle_import_file(message: types.Message, state: FSMContext):
 
                 groups_data.append({
                     'name': group_name,
-                    'display_id': group_id,  # Keep as string for VARCHAR(3)
+                    'display_id': group_id,  # Keep as string for VARCHAR(10)
                     'row': row_num
                 })
 

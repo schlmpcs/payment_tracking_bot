@@ -40,7 +40,7 @@ def format_datetime(date: datetime) -> str:
 
 
 def format_display_id(number: int) -> str:
-    """Format number as 3-digit display ID (001, 002, etc.)"""
+    """Format number as display ID, zero-padded to at least 3 digits (001, 002, ..., 999, 1000, ...)"""
     return f"{number:03d}"
 
 

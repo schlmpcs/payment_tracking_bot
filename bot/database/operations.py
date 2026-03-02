@@ -172,7 +172,7 @@ class Database:
             if not users_has_display_id:
                 self.logger.info(
                     "🔄 Adding display_id column to users table...")
-                await conn.execute("ALTER TABLE users ADD COLUMN display_id VARCHAR(3)")
+                await conn.execute("ALTER TABLE users ADD COLUMN display_id VARCHAR(10)")
 
                 # Populate display_ids for existing users
                 existing_users = await conn.fetch("SELECT user_id FROM users ORDER BY user_id")
@@ -211,7 +211,7 @@ class Database:
             if not groups_has_display_id:
                 self.logger.info(
                     "🔄 Adding display_id column to groups table...")
-                await conn.execute("ALTER TABLE groups ADD COLUMN display_id VARCHAR(3)")
+                await conn.execute("ALTER TABLE groups ADD COLUMN display_id VARCHAR(10)")
 
                 # Populate display_ids for existing groups and update names
                 existing_groups = await conn.fetch("SELECT group_id, group_name FROM groups ORDER BY group_id")
@@ -288,6 +288,25 @@ class Database:
                 await conn.execute("ALTER TABLE groups ADD CONSTRAINT groups_payment_day_check CHECK (payment_day_of_month BETWEEN 1 AND 28)")
                 await conn.execute("ALTER TABLE groups ALTER COLUMN payment_day_of_month SET NOT NULL")
                 self.logger.info("✅ payment_day_of_month migration completed")
+
+            # Widen display_id columns from VARCHAR(3) to VARCHAR(10) on existing databases.
+            # Postgres widens VARCHAR in-place (no table rewrite), so this is safe on a live DB.
+            for table in ('users', 'groups'):
+                col_length = await conn.fetchval(
+                    """
+                    SELECT character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_name = $1 AND column_name = 'display_id'
+                    """,
+                    table
+                )
+                if col_length is not None and col_length < 10:
+                    self.logger.info(
+                        f"🔄 Widening {table}.display_id from VARCHAR({col_length}) to VARCHAR(10)...")
+                    await conn.execute(
+                        f"ALTER TABLE {table} ALTER COLUMN display_id TYPE VARCHAR(10)"
+                    )
+                    self.logger.info(f"✅ {table}.display_id widened to VARCHAR(10)")
 
         except Exception as e:
             self.logger.error(f"❌ Migration failed: {e}")
