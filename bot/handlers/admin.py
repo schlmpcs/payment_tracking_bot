@@ -2222,8 +2222,7 @@ async def fraud_check_process(message: types.Message, state: FSMContext):
             return
 
         # Fetch all relevant payments from DB (KZ groups only, with accumulated op_numbers)
-        current_month_start = get_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
+        # current_month_start is already set from FSM state above (user-selected date)
         async with db.pool.acquire() as conn:
              # Groups starting with '0' are KZ
              # We want payments that HAVE an op number
