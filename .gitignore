@@ -137,3 +137,6 @@ bot_data/
 user_data/
 receipts/
 uploads/
+
+# Local audit / personal notes (not for version control)
+AUDIT.md

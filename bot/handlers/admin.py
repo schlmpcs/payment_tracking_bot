@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.enums import ChatType
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 
 from bot.database.operations import Database
 from bot.config.settings import Settings
@@ -177,7 +178,7 @@ async def broadcast_command(message: types.Message, state: FSMContext):
     await state.set_state(AdminStates.broadcasting_message)
 
 
-@admin_router.callback_query(F.data.startswith("broadcast_target_"))
+@admin_router.callback_query(F.data.startswith("broadcast_target_"), StateFilter(AdminStates.broadcasting_message))
 async def broadcast_target_selection(callback: types.CallbackQuery, state: FSMContext):
     """Handle broadcast target selection"""
     target = callback.data.split("_")[-1]  # all, kz, ru
@@ -189,8 +190,6 @@ async def broadcast_target_selection(callback: types.CallbackQuery, state: FSMCo
     }
 
     await state.update_data(broadcast_target=target)
-    # We are already in broadcasting_message state from command, but let's reinforce it
-    await state.set_state(AdminStates.broadcasting_confirm) # Actually wait, we need message first
 
     await callback.message.edit_text(
         f"📢 <b>Рассылка: {target_names.get(target, target)}</b>\n\n"
@@ -264,19 +263,22 @@ async def broadcast_confirmation_handler(callback: types.CallbackQuery, state: F
         return
 
     if callback.data == "broadcast_confirm":
+        # Answer immediately — Telegram times out callbacks after 30 seconds,
+        # and the broadcast loop can run much longer than that.
+        await callback.answer()
+
         data = await state.get_data()
         target = data.get('broadcast_target')
         message_id = data.get('message_id')
         chat_id = data.get('chat_id')
 
         await callback.message.edit_text(
-            f"⏳ <b>Начинаю рассылку...</b>\n"
-            f"Пожалуйста, не используйте бота до завершения операции.",
+            "⏳ <b>Начинаю рассылку...</b>\n"
+            "Пожалуйста, не используйте бота до завершения операции.",
             parse_mode="HTML"
         )
 
         try:
-            # Get users
             users = await db.get_users_by_region(target)
 
             if not users:
@@ -287,11 +289,9 @@ async def broadcast_confirmation_handler(callback: types.CallbackQuery, state: F
             success_count = 0
             fail_count = 0
             total = len(users)
-            
-            # Simple progress update every 10 users
-            last_edit_time = datetime.now()
+            last_progress_update = datetime.now()
 
-            for i, user_id in enumerate(users):
+            for i, user_id in enumerate(users, 1):
                 try:
                     await callback.bot.copy_message(
                         chat_id=user_id,
@@ -299,14 +299,42 @@ async def broadcast_confirmation_handler(callback: types.CallbackQuery, state: F
                         message_id=message_id
                     )
                     success_count += 1
+                except TelegramRetryAfter as e:
+                    # Rate limited — wait and retry once
+                    await asyncio.sleep(e.retry_after)
+                    try:
+                        await callback.bot.copy_message(
+                            chat_id=user_id,
+                            from_chat_id=chat_id,
+                            message_id=message_id
+                        )
+                        success_count += 1
+                    except Exception:
+                        fail_count += 1
+                except TelegramForbiddenError:
+                    # User blocked the bot — not an error worth logging
+                    fail_count += 1
                 except Exception as e:
                     fail_count += 1
                     logger.error(f"Failed to broadcast to {user_id}: {e}")
 
-                # Avoid hitting limits too hard
-                await asyncio.sleep(0.05) 
+                await asyncio.sleep(0.05)
 
-            await callback.message.answer(
+                # Live progress update — throttled to once every 2 seconds
+                # to avoid hitting the message-edit rate limit.
+                now = datetime.now()
+                if (now - last_progress_update).total_seconds() >= 2:
+                    try:
+                        await callback.message.edit_text(
+                            f"⏳ <b>Рассылка...</b> {i}/{total}\n"
+                            f"✅ Успешно: {success_count}  ❌ Ошибки: {fail_count}",
+                            parse_mode="HTML"
+                        )
+                        last_progress_update = now
+                    except Exception:
+                        pass  # Ignore edit failures (e.g. message not modified)
+
+            await callback.message.edit_text(
                 f"✅ <b>Рассылка завершена!</b>\n\n"
                 f"👥 Всего пользователей: {total}\n"
                 f"📤 Успешно отправлено: {success_count}\n"
@@ -316,10 +344,9 @@ async def broadcast_confirmation_handler(callback: types.CallbackQuery, state: F
 
         except Exception as e:
             logger.error(f"Broadcast failed: {e}")
-            await callback.message.answer(f"❌ Ошибка при рассылке: {e}")
+            await callback.message.edit_text(f"❌ Ошибка при рассылке: {e}")
 
         await state.clear()
-        await callback.answer()
 
 
 @admin_router.message(Command("check_notifications"))
