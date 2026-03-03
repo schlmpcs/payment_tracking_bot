@@ -763,6 +763,19 @@ class Database:
                     next_payment_date = current_payment_date + \
                         timedelta(days=30 * months_paid)
 
+                # Explicit duplicate check — guards against the case where the
+                # partial unique index failed to create (e.g. pre-existing duplicates).
+                if receipt_op_number:
+                    existing = await conn.fetchval(
+                        "SELECT payment_id FROM payments WHERE receipt_op_number = $1",
+                        receipt_op_number
+                    )
+                    if existing:
+                        self.logger.warning(
+                            f"Duplicate receipt op_number blocked (pre-check) for user {user_id} (op: {receipt_op_number})"
+                        )
+                        return False, None, "duplicate"
+
                 await conn.execute(
                     """
                     INSERT INTO payments (user_id, group_id, months_paid, payment_date, next_payment_date, receipt_file_id, receipt_op_number)
