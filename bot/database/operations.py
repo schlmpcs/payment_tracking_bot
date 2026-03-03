@@ -386,6 +386,20 @@ class Database:
             self.logger.error(f"Failed to add user {user_id}: {e}")
             return False
 
+    async def get_corrupted_users(self) -> List[int]:
+        """Return user_ids where username was auto-generated (user_<id> pattern)"""
+        if not self.pool:
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT user_id FROM users WHERE username = 'user_' || user_id::text"
+                )
+                return [row['user_id'] for row in rows]
+        except Exception as e:
+            self.logger.error(f"Failed to get corrupted users: {e}")
+            return []
+
     async def get_user(self, user_id: int) -> Optional[User]:
         """Get user by ID"""
         if not self.pool:

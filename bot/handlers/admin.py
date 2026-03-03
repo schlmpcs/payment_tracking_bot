@@ -948,8 +948,10 @@ async def add_user_finish(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    # Ensure user record exists
-    await db.add_user(target_user_id, f"user_{target_user_id}", None)
+    # Only create user record if they don't already exist (avoid overwriting real username/name)
+    existing_user = await db.get_user(target_user_id)
+    if not existing_user:
+        await db.add_user(target_user_id, f"user_{target_user_id}", None)
 
     # Add user to group
     success = await db.add_user_to_group(target_user_id, group.group_id)
@@ -2547,3 +2549,37 @@ async def cmd_notfull(message: types.Message):
         )
 
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@admin_router.message(Command("fixusers"))
+async def cmd_fixusers(message: types.Message):
+    """Fetch real Telegram info for users with corrupted usernames and fix them in DB"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    if not is_admin(message.from_user.id, settings.tg_admin_ids):
+        return
+
+    # Find users with fake auto-generated usernames
+    corrupted = await db.get_corrupted_users()
+    if not corrupted:
+        await message.answer("✅ Нет пользователей с повреждёнными данными.")
+        return
+
+    await message.answer(f"🔄 Исправляю данные для {len(corrupted)} пользователей...")
+
+    fixed = 0
+    failed = 0
+    for user_id in corrupted:
+        try:
+            chat = await message.bot.get_chat(user_id)
+            username = chat.username or chat.first_name or "User"
+            first_name = chat.first_name
+            await db.add_user(user_id, username, first_name)
+            fixed += 1
+        except Exception:
+            failed += 1
+
+    lines = [f"✅ Исправлено: {fixed}"]
+    if failed:
+        lines.append(f"❌ Не удалось получить данные: {failed} (пользователи не писали боту)")
+    await message.answer("\n".join(lines))
