@@ -173,6 +173,25 @@ class Database:
                 f"(duplicate data may already exist — run /fraudcheck to investigate): {e}"
             )
 
+        # Add slots column to user_groups if not present (multi-slot support)
+        try:
+            async with self.pool.acquire() as conn:
+                slots_exists = await conn.fetchval("""
+                    SELECT EXISTS(
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'user_groups' AND column_name = 'slots'
+                    )
+                """)
+                if not slots_exists:
+                    self.logger.info("🔄 Adding slots column to user_groups...")
+                    await conn.execute(
+                        "ALTER TABLE user_groups ADD COLUMN slots INTEGER NOT NULL DEFAULT 1"
+                    )
+                    self.logger.info("✅ slots column added to user_groups")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to add slots column to user_groups: {e}")
+            return False
+
         return True
 
     async def _migrate_display_ids(self, conn):
@@ -850,90 +869,122 @@ class Database:
             self.logger.error(f"Failed to get payments for backfill: {e}")
             return []
 
-    async def get_user_payment_status(self, user_id: int) -> Optional[PaymentStatus]:
-        """Get user's current payment status"""
+    def _row_to_payment_status(self, row) -> PaymentStatus:
+        """Convert a DB row to a PaymentStatus, computing derived fields."""
+        from bot.utils.helpers import add_months_to_date
+        next_payment = row['next_payment_date']
+
+        if not next_payment:
+            current_time = get_now()
+            payment_day = row['payment_day_of_month']
+            if current_time.day <= payment_day + 2:
+                next_payment = current_time.replace(day=payment_day)
+            else:
+                next_payment = add_months_to_date(current_time, 1, payment_day)
+
+        if isinstance(next_payment, datetime):
+            next_payment_date = next_payment.date()
+        else:
+            next_payment_date = next_payment
+
+        today = get_now().date()
+        is_overdue = next_payment_date <= today
+        days_diff = (next_payment_date - today).days
+        months_remaining = max(0, days_diff // 30)
+
+        return PaymentStatus(
+            user_id=row['user_id'],
+            user_display_id=row['user_display_id'],
+            group_id=row['group_id'],
+            group_name=row['group_name'],
+            group_display_id=row['group_display_id'],
+            next_payment_date=next_payment_date,
+            last_payment_date=row['last_payment_date'],
+            months_remaining=months_remaining,
+            is_overdue=is_overdue,
+            slots=row.get('slots', 1),
+        )
+
+    async def get_user_payment_status(self, user_id: int, group_id: Optional[int] = None) -> Optional[PaymentStatus]:
+        """Get user's payment status. If group_id is provided, returns status for that
+        specific group; otherwise returns the first group (for single-group users)."""
         if not self.pool:
             return None
 
         try:
             async with self.pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    """
-                    SELECT 
+                query = """
+                    SELECT
                         ug.user_id,
+                        ug.slots,
                         u.display_id as user_display_id,
                         g.group_id,
                         g.group_name,
                         g.display_id as group_display_id,
                         g.payment_day_of_month,
-                        (SELECT next_payment_date FROM payments 
-                         WHERE user_id = ug.user_id AND group_id = g.group_id 
+                        (SELECT next_payment_date FROM payments
+                         WHERE user_id = ug.user_id AND group_id = g.group_id
                          ORDER BY payment_date DESC LIMIT 1) as next_payment_date,
-                        (SELECT payment_date FROM payments 
-                         WHERE user_id = ug.user_id AND group_id = g.group_id 
+                        (SELECT payment_date FROM payments
+                         WHERE user_id = ug.user_id AND group_id = g.group_id
                          ORDER BY payment_date DESC LIMIT 1) as last_payment_date
                     FROM user_groups ug
                     JOIN groups g ON ug.group_id = g.group_id
                     JOIN users u ON ug.user_id = u.user_id
                     WHERE ug.user_id = $1
-                    """,
-                    user_id
-                )
+                """
+                if group_id is not None:
+                    row = await conn.fetchrow(query + " AND ug.group_id = $2", user_id, group_id)
+                else:
+                    row = await conn.fetchrow(query, user_id)
 
                 if not row:
                     return None
 
-                # Get next payment date from the most recent payment record
-                # (which includes phantom payment set when user joined)
-                next_payment = row['next_payment_date']
-                
-                if not next_payment:
-                    # Fallback for users who joined before phantom payment implementation
-                    from bot.utils.helpers import add_months_to_date
-                    current_time = get_now()
-                    payment_day = row['payment_day_of_month']
-
-                    # If joining within 2 days after payment day, set to current month
-                    # Otherwise, set to next month
-                    if current_time.day <= payment_day + 2:
-                        # Within grace period - payment due this month
-                        next_payment = current_time.replace(day=payment_day)
-                    else:
-                        # Past grace period - payment due next month
-                        next_payment = add_months_to_date(
-                            current_time, 1, payment_day)
-
-                # Convert datetime to date if needed for comparison
-                if isinstance(next_payment, datetime):
-                    next_payment_date = next_payment.date()
-                else:
-                    next_payment_date = next_payment
-
-                # Compare dates only, not datetime (to avoid time-of-day issues)
-                today = get_now().date()
-                # User is overdue if payment date has arrived (including today)
-                is_overdue = next_payment_date <= today
-
-                # Calculate months remaining (rough estimate)
-                days_diff = (next_payment_date - today).days
-                months_remaining = max(0, days_diff // 30)
-
-                return PaymentStatus(
-                    user_id=row['user_id'],
-                    user_display_id=row['user_display_id'],
-                    group_id=row['group_id'],
-                    group_name=row['group_name'],
-                    group_display_id=row['group_display_id'],
-                    next_payment_date=next_payment_date,
-                    last_payment_date=row['last_payment_date'],
-                    months_remaining=months_remaining,
-                    is_overdue=is_overdue
-                )
+                return self._row_to_payment_status(row)
 
         except Exception as e:
             self.logger.error(
                 f"Failed to get payment status for user {user_id}: {e}")
             return None
+
+    async def get_all_user_payment_statuses(self, user_id: int) -> List[PaymentStatus]:
+        """Get payment status for ALL groups the user belongs to, ordered by payment day."""
+        if not self.pool:
+            return []
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        ug.user_id,
+                        ug.slots,
+                        u.display_id as user_display_id,
+                        g.group_id,
+                        g.group_name,
+                        g.display_id as group_display_id,
+                        g.payment_day_of_month,
+                        (SELECT next_payment_date FROM payments
+                         WHERE user_id = ug.user_id AND group_id = g.group_id
+                         ORDER BY payment_date DESC LIMIT 1) as next_payment_date,
+                        (SELECT payment_date FROM payments
+                         WHERE user_id = ug.user_id AND group_id = g.group_id
+                         ORDER BY payment_date DESC LIMIT 1) as last_payment_date
+                    FROM user_groups ug
+                    JOIN groups g ON ug.group_id = g.group_id
+                    JOIN users u ON ug.user_id = u.user_id
+                    WHERE ug.user_id = $1
+                    ORDER BY g.payment_day_of_month, g.group_id
+                    """,
+                    user_id
+                )
+                return [self._row_to_payment_status(r) for r in rows]
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to get all payment statuses for user {user_id}: {e}")
+            return []
 
     async def get_overdue_users(self) -> List[PaymentStatus]:
         """Get all users with overdue payments"""
@@ -1314,18 +1365,19 @@ class Database:
                 rows = await conn.fetch(
                     """
                     SELECT u.user_id, u.username, u.first_name, u.display_id,
+                           ug.slots,
                            COUNT(p.payment_id) as total_payments,
                            MAX(p.payment_date) as last_payment,
                            g.payment_day_of_month,
-                           (SELECT next_payment_date FROM payments 
-                            WHERE user_id = u.user_id AND group_id = $1 
+                           (SELECT next_payment_date FROM payments
+                            WHERE user_id = u.user_id AND group_id = $1
                             ORDER BY payment_date DESC LIMIT 1) as next_payment_date
                     FROM users u
                     JOIN user_groups ug ON u.user_id = ug.user_id
                     JOIN groups g ON ug.group_id = g.group_id
                     LEFT JOIN payments p ON u.user_id = p.user_id AND p.group_id = $1
                     WHERE ug.group_id = $1
-                    GROUP BY u.user_id, u.username, u.first_name, u.display_id, g.payment_day_of_month
+                    GROUP BY u.user_id, u.username, u.first_name, u.display_id, ug.slots, g.payment_day_of_month
                     ORDER BY u.display_id
                     """,
                     group_id
@@ -1367,6 +1419,7 @@ class Database:
                         'username': row['username'],
                         'first_name': row['first_name'],
                         'display_id': row['display_id'],
+                        'slots': row['slots'],
                         'total_payments': row['total_payments'] or 0,
                         'last_payment': row['last_payment'],
                         'next_payment_date': next_payment_date,
@@ -1409,6 +1462,30 @@ class Database:
         except Exception as e:
             self.logger.error(
                 f"Failed to remove user {user_id} from group {group_id}: {e}")
+            return False
+
+    async def set_user_slots(self, user_id: int, group_id: int, slots: int) -> bool:
+        """Set the number of slots (accounts) for a user in a specific group."""
+        if not self.pool:
+            return False
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute(
+                    "UPDATE user_groups SET slots = $1 WHERE user_id = $2 AND group_id = $3",
+                    slots, user_id, group_id
+                )
+                # result is like "UPDATE 1" — check at least one row was updated
+                updated = int(result.split()[-1])
+                if updated == 0:
+                    self.logger.warning(
+                        f"set_user_slots: no row found for user {user_id} in group {group_id}")
+                    return False
+                self.logger.info(
+                    f"Set slots={slots} for user {user_id} in group {group_id}")
+                return True
+        except Exception as e:
+            self.logger.error(
+                f"Failed to set slots for user {user_id} in group {group_id}: {e}")
             return False
 
     async def get_user_payment_history(self, user_id: int) -> List[Payment]:

@@ -23,7 +23,7 @@ from bot.utils.keyboards import get_admin_main_keyboard, get_confirmation_keyboa
 from bot.utils.helpers import (
     format_date, calculate_days_until,
     get_payment_status_emoji, get_payment_status_text,
-    is_admin, get_now, format_datetime, get_region_from_group_id
+    is_admin, get_now, format_datetime, get_region_from_group_id, get_payment_info
 )
 
 # Initialize router
@@ -2033,10 +2033,13 @@ async def show_group_members(message: types.Message, state: FSMContext):
         username_display = f"@{member['username']}" if member['username'] else 'нет username'
         first_name = member['first_name'] or 'N/A'
 
+        slots = member.get('slots', 1)
+        slots_line = f"🔢 Слотов: {slots}\n" if slots > 1 else ""
         members_text += (
             f"👤 <b>{first_name}</b> ({username_display})\n"
             f"🆔 ID: {member['display_id']} | Telegram ID: <code>{member['user_id']}</code>\n"
-            f"💳 Платежей: {member['total_payments']} | Последний: {last_payment}\n\n"
+            f"💳 Платежей: {member['total_payments']} | Последний: {last_payment}\n"
+            f"{slots_line}\n"
         )
 
     members_text += f"Всего участников: {len(members)}\n\n"
@@ -2405,3 +2408,142 @@ async def backfill_receipts_command(message: types.Message):
     except Exception as e:
         logger.error(f"Backfill fatal error: {e}")
         await message.answer(f"❌ Критическая ошибка: {e}")
+
+
+# ──────────────────────────────────────────────
+# /setslots — set number of accounts (slots) for a user in a group
+# ──────────────────────────────────────────────
+
+@admin_router.message(Command("setslots"))
+async def setslots_command(message: types.Message, state: FSMContext):
+    """Start setslots flow: ask which group."""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    if not is_admin(message.from_user.id, settings.tg_admin_ids):
+        return
+
+    await message.answer(
+        "🔢 <b>Изменение слотов пользователя</b>\n\n"
+        "Введите название или ID группы:\n\n"
+        "💡 <i>Используйте /admin для отмены</i>",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminStates.setting_slots_group)
+
+
+@admin_router.message(StateFilter(AdminStates.setting_slots_group))
+async def setslots_get_group(message: types.Message, state: FSMContext):
+    """Receive group, show members, ask for user+slots input."""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    if not is_admin(message.from_user.id, settings.tg_admin_ids):
+        return
+
+    group = await db.get_group_by_name_or_id(message.text.strip())
+    if not group:
+        await message.answer(
+            f"❌ Группа '{message.text.strip()}' не найдена. Попробуйте снова."
+        )
+        return
+
+    members = await db.get_group_members(group.group_id)
+    if not members:
+        await message.answer(
+            f"📭 Группа {group.group_name} пуста.",
+            parse_mode="HTML"
+        )
+        await state.clear()
+        return
+
+    text = (
+        f"👥 <b>Участники группы {group.group_name}</b>\n\n"
+    )
+    for m in members:
+        slots = m.get('slots', 1)
+        name = m['first_name'] or 'N/A'
+        username = f"@{m['username']}" if m['username'] else 'нет username'
+        text += (
+            f"• <b>{name}</b> ({username}) — "
+            f"ID: <code>{m['user_id']}</code> — Слотов: {slots}\n"
+        )
+
+    text += (
+        "\n\nВведите: <code>telegram_id количество_слотов</code>\n"
+        "Пример: <code>123456789 2</code>"
+    )
+
+    await message.answer(text, parse_mode="HTML")
+    await state.update_data(setslots_group=group)
+    await state.set_state(AdminStates.setting_slots_user)
+
+
+@admin_router.message(StateFilter(AdminStates.setting_slots_user))
+async def setslots_apply(message: types.Message, state: FSMContext):
+    """Parse user_id + slots and apply."""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    if not is_admin(message.from_user.id, settings.tg_admin_ids):
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) != 2:
+        await message.answer(
+            "❌ Неверный формат. Введите: <code>telegram_id количество_слотов</code>\n"
+            "Пример: <code>123456789 2</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    try:
+        target_user_id = int(parts[0])
+        new_slots = int(parts[1])
+    except ValueError:
+        await message.answer("❌ Оба значения должны быть числами.")
+        return
+
+    if new_slots < 1:
+        await message.answer("❌ Количество слотов должно быть не менее 1.")
+        return
+
+    data = await state.get_data()
+    group = data.get('setslots_group')
+    if not group:
+        await message.answer("❌ Данные группы потеряны. Начните заново.")
+        await state.clear()
+        return
+
+    # Verify user is actually in this group
+    members = await db.get_group_members(group.group_id)
+    member = next((m for m in members if m['user_id'] == target_user_id), None)
+    if not member:
+        await message.answer(
+            f"❌ Пользователь {target_user_id} не найден в группе {group.group_name}."
+        )
+        return
+
+    success = await db.set_user_slots(target_user_id, group.group_id, new_slots)
+    await state.clear()
+
+    if success:
+        # Calculate monthly amount for confirmation
+        region = get_region_from_group_id(group.display_id)
+        payment_info = get_payment_info(region, settings)
+        monthly = payment_info['price'] * new_slots
+        currency = payment_info['currency']
+
+        name = member['first_name'] or 'N/A'
+        username = f"@{member['username']}" if member['username'] else 'нет username'
+        await message.answer(
+            f"✅ <b>Слоты обновлены</b>\n\n"
+            f"👤 Пользователь: <b>{name}</b> ({username})\n"
+            f"👥 Группа: {group.group_name}\n"
+            f"🔢 Слотов: {new_slots}\n"
+            f"💰 Сумма оплаты: {monthly} {currency}/мес",
+            parse_mode="HTML"
+        )
+        logger.info(
+            f"Admin {message.from_user.id} set slots={new_slots} "
+            f"for user {target_user_id} in group {group.group_id}"
+        )
+    else:
+        await message.answer("❌ Не удалось обновить слоты. Попробуйте снова.")

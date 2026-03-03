@@ -7,6 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 class PaymentStates(StatesGroup):
     """Payment flow states"""
+    selecting_group = State()    # multi-group: user picks which group to pay for
     selecting_months = State()
     uploading_receipt = State()
 
@@ -35,3 +36,5 @@ class AdminStates(StatesGroup):
     fraud_check_file = State()
     broadcasting_message = State()
     broadcasting_confirm = State()
+    setting_slots_group = State()
+    setting_slots_user = State()

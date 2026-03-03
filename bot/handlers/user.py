@@ -8,6 +8,7 @@ from aiogram import Router, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.enums import ChatType
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.database.operations import Database
 from bot.config.settings import Settings
@@ -591,31 +592,38 @@ async def status_command(message: types.Message):
         )
         return
 
-    # Get payment status
-    status = await db.get_user_payment_status(user_id)
-    if not status:
+    # Get payment status for all groups
+    statuses = await db.get_all_user_payment_statuses(user_id)
+    if not statuses:
         await message.answer(
             "❌ Не удается получить информацию о ваших платежах.\n"
             "Пожалуйста, обратитесь к администратору."
         )
         return
 
-    days_until = calculate_days_until(status.next_payment_date)
-    emoji = get_payment_status_emoji(days_until)
-    status_text = get_payment_status_text(days_until)
+    response = "📊 <b>Статус платежей</b>\n\n"
+    any_due_soon = False
 
-    response = (
-        f"{emoji} <b>Статус платежей</b>\n\n"
-        f"👥 Группа: {status.group_name}\n"
-        f"📅 Следующий платёж до: {format_date(status.next_payment_date)}\n"
-        f"📊 Статус: {status_text}\n"
-    )
+    for status in statuses:
+        days_until = calculate_days_until(status.next_payment_date)
+        emoji = get_payment_status_emoji(days_until)
+        status_text = get_payment_status_text(days_until)
 
-    if status.last_payment_date:
-        response += f"💰 Последний платёж: {format_date(status.last_payment_date)}\n"
+        response += (
+            f"{emoji} <b>{status.group_name}</b>\n"
+            f"📅 Следующий платёж до: {format_date(status.next_payment_date)}\n"
+            f"📊 Статус: {status_text}\n"
+        )
+        if status.last_payment_date:
+            response += f"💰 Последний платёж: {format_date(status.last_payment_date)}\n"
+        if status.slots > 1:
+            response += f"🔢 Слотов: {status.slots}\n"
+        response += "\n"
+        if days_until <= 3:
+            any_due_soon = True
 
-    if days_until <= 3:
-        response += f"\n💡 Используйте /pay для совершения платежа"
+    if any_due_soon:
+        response += "💡 Используйте /pay для совершения платежа"
 
     await message.answer(response, parse_mode="HTML", reply_markup=get_user_main_menu())
 
@@ -644,32 +652,70 @@ async def pay_command(message: types.Message, state: FSMContext):
         )
         return
 
-    # Get user's current status
-    status = await db.get_user_payment_status(user_id)
-    if not status:
+    # Get status for all groups user belongs to
+    statuses = await db.get_all_user_payment_statuses(user_id)
+    if not statuses:
         await message.answer(
             "❌ Не удается получить информацию о ваших платежах.\n"
             "Пожалуйста, обратитесь к администратору."
         )
         return
 
+    if len(statuses) == 1:
+        # Single group — go straight to month selection
+        status = statuses[0]
+        await state.update_data(selected_group_id=status.group_id)
+        days_until = calculate_days_until(status.next_payment_date)
+        emoji = get_payment_status_emoji(days_until)
+        status_message = (
+            f"💳 <b>Оплата для группы: {status.group_name}</b>\n\n"
+            f"{emoji} Следующий платёж до: {format_date(status.next_payment_date)}\n"
+            f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
+            f"Пожалуйста, выберите на сколько месяцев хотите заплатить:"
+        )
+        await message.answer(status_message, reply_markup=get_months_keyboard(), parse_mode="HTML")
+        await state.set_state(PaymentStates.selecting_months)
+    else:
+        # Multiple groups — show group selector
+        builder = InlineKeyboardBuilder()
+        for s in statuses:
+            days_until = calculate_days_until(s.next_payment_date)
+            emoji = get_payment_status_emoji(days_until)
+            label = f"{s.group_name} — до {format_date(s.next_payment_date)} {emoji}"
+            builder.button(text=label, callback_data=f"pay_group_{s.group_id}")
+        builder.adjust(1)
+        await message.answer(
+            "💳 <b>Выберите группу для оплаты:</b>",
+            reply_markup=builder.as_markup(),
+            parse_mode="HTML"
+        )
+        await state.set_state(PaymentStates.selecting_group)
+
+
+@user_router.callback_query(F.data.startswith("pay_group_"), StateFilter(PaymentStates.selecting_group))
+async def handle_pay_group_selection(callback: types.CallbackQuery, state: FSMContext):
+    """Handle group selection when user is in multiple groups."""
+    group_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+
+    status = await db.get_user_payment_status(user_id, group_id)
+    if not status:
+        await callback.message.edit_text("❌ Не удалось получить информацию о группе.")
+        await callback.answer()
+        return
+
+    await state.update_data(selected_group_id=group_id)
+
     days_until = calculate_days_until(status.next_payment_date)
     emoji = get_payment_status_emoji(days_until)
-
-    # Show current status and payment options
     status_message = (
         f"💳 <b>Оплата для группы: {status.group_name}</b>\n\n"
         f"{emoji} Следующий платёж до: {format_date(status.next_payment_date)}\n"
         f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
         f"Пожалуйста, выберите на сколько месяцев хотите заплатить:"
     )
-
-    await message.answer(
-        status_message,
-        reply_markup=get_months_keyboard(),
-        parse_mode="HTML"
-    )
-
+    await callback.message.edit_text(status_message, reply_markup=get_months_keyboard(), parse_mode="HTML")
+    await callback.answer()
     await state.set_state(PaymentStates.selecting_months)
 
 
@@ -681,8 +727,10 @@ async def handle_months_selection(callback: types.CallbackQuery, state: FSMConte
 
     await state.update_data(months=months)
 
-    # Get user's group to determine region
-    status = await db.get_user_payment_status(user_id)
+    # Get the group that was selected in the pay flow
+    data = await state.get_data()
+    selected_group_id = data.get('selected_group_id')
+    status = await db.get_user_payment_status(user_id, selected_group_id)
     if not status:
         await callback.message.edit_text("❌ Не удалось получить информацию о группе.")
         await callback.answer()
@@ -691,14 +739,20 @@ async def handle_months_selection(callback: types.CallbackQuery, state: FSMConte
     # Get regional payment info
     region = get_region_from_group_id(status.group_display_id)
     payment_info = get_payment_info(region, settings)
-    
-    # Calculate payment amount
-    amount = months * payment_info['price']
+
+    # Calculate payment amount (price × slots)
+    base_price = payment_info['price']
+    amount = months * base_price * status.slots
     currency = payment_info['currency']
+
+    slots_note = (
+        f" ({base_price} {currency} × {status.slots} слота)"
+        if status.slots > 1 else ""
+    )
 
     await callback.message.edit_text(
         f"✅ Вы выбрали <b>{months} месяц{'ев' if months > 1 else ''}</b>\n\n"
-        f"💰 <b>Нужно оплатить:</b> {amount} {currency}\n\n"
+        f"💰 <b>Нужно оплатить:</b> {amount} {currency}{slots_note}\n\n"
         f"{payment_info['payment_text']}\n\n"
         f"📎 Пожалуйста, загрузите чек об оплате\n\n"
         f"💡 Поддерживаемые форматы: JPG, PNG, PDF\n"
@@ -802,9 +856,10 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
         user_id = message.from_user.id
         data = await state.get_data()
         months = data.get('months', 1)
+        selected_group_id = data.get('selected_group_id')
 
-        # Get user's current status (to get group_id)
-        status = await db.get_user_payment_status(user_id)
+        # Get status for the specific group chosen during /pay flow
+        status = await db.get_user_payment_status(user_id, selected_group_id)
         if not status:
             await message.answer(
                 "❌ Не удается получить информацию о ваших платежах.\n"

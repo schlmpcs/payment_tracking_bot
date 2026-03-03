@@ -48,6 +48,7 @@ class PaymentStatus(NamedTuple):
     last_payment_date: Optional[datetime]
     months_remaining: int
     is_overdue: bool
+    slots: int = 1  # number of accounts this user holds in this group
     username: Optional[str] = None  # For admin warnings
     first_name: Optional[str] = None  # For admin warnings
     days_overdue: int = 0  # For admin warnings
