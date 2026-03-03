@@ -903,7 +903,8 @@ async def add_user_start(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         "👤 <b>Добавить пользователя в группу</b>\n\n"
-        "Пожалуйста, введите Telegram ID пользователя (числовой):\n\n"
+        "Введите <b>Telegram ID</b> и <b>ID группы</b> через пробел:\n"
+        "<code>8000913303 001</code>\n\n"
         "💡 <i>Используйте /admin для отмены операции</i>",
         parse_mode="HTML"
     )
@@ -913,66 +914,41 @@ async def add_user_start(callback: types.CallbackQuery, state: FSMContext):
 
 
 @admin_router.message(StateFilter(AdminStates.adding_user_username))
-async def add_user_get_group(message: types.Message, state: FSMContext):
-    """Get group for user addition"""
+async def add_user_finish(message: types.Message, state: FSMContext):
+    """Parse USER_ID GROUP_ID and add user to group"""
     if message.chat.type != ChatType.PRIVATE:
         return
 
     user_id = message.from_user.id
     if not is_admin(user_id, settings.tg_admin_ids):
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) != 2:
+        await message.answer(
+            "❌ Неверный формат. Введите через пробел:\n"
+            "<code>TELEGRAM_ID ID_ГРУППЫ</code>\n"
+            "Например: <code>8000913303 001</code>",
+            parse_mode="HTML"
+        )
         return
 
     try:
-        target_user_id = int(message.text.strip())
+        target_user_id = int(parts[0])
     except ValueError:
-        await message.answer("❌ Please enter a valid numeric user ID.")
+        await message.answer("❌ Telegram ID должен быть числом.")
         return
 
-    await state.update_data(target_user_id=target_user_id)
+    group_display_id = parts[1].strip()
 
-    # Show available groups
-    groups = await db.get_all_groups()
-    if not groups:
-        await message.answer("❌ No groups available. Create a group first.")
-        await state.clear()
-        return
-
-    groups_text = "Available groups:\n\n"
-    for group in groups:
-        groups_text += f"• {group.group_name} (ID: {group.group_id})\n"
-
-    await message.answer(
-        f"{groups_text}\n"
-        f"Please enter the group name to add user {target_user_id} to:\n\n"
-        f"💡 <i>Используйте /admin для отмены операции</i>",
-        parse_mode="HTML"
-    )
-
-    await state.set_state(AdminStates.adding_user_group)
-
-
-@admin_router.message(StateFilter(AdminStates.adding_user_group))
-async def add_user_finish(message: types.Message, state: FSMContext):
-    """Finish user addition"""
-    if message.chat.type != ChatType.PRIVATE:
-        return
-
-    user_id = message.from_user.id
-    if not is_admin(user_id, settings.tg_admin_ids):
-        return
-
-    data = await state.get_data()
-    target_user_id = data.get('target_user_id')
-    group_name = message.text.strip()
-
-    # Get group
-    group = await db.get_group_by_name(group_name)
+    # Look up group by display_id
+    group = await db.get_group_by_display_id(group_display_id)
     if not group:
-        await message.answer(f"❌ Group '{group_name}' not found.")
+        await message.answer(f"❌ Группа с ID <code>{group_display_id}</code> не найдена.", parse_mode="HTML")
         await state.clear()
         return
 
-    # Add user (this will create user record if it doesn't exist)
+    # Ensure user record exists
     await db.add_user(target_user_id, f"user_{target_user_id}", None)
 
     # Add user to group
@@ -980,16 +956,15 @@ async def add_user_finish(message: types.Message, state: FSMContext):
 
     if success:
         await message.answer(
-            f"✅ <b>User Added Successfully!</b>\n\n"
-            f"👤 User ID: {target_user_id}\n"
-            f"👥 Group: {group_name}\n"
-            f"📅 Next payment due: {format_date(group.next_payment_date)}",
+            f"✅ <b>Пользователь добавлен!</b>\n\n"
+            f"👤 Telegram ID: <code>{target_user_id}</code>\n"
+            f"👥 Группа: {group.group_name} (ID: {group.display_id})\n"
+            f"📅 Следующий платёж: {format_date(group.next_payment_date)}",
             parse_mode="HTML"
         )
-        logger.info(
-            f"Admin {user_id} added user {target_user_id} to group '{group_name}'")
+        logger.info(f"Admin {user_id} added user {target_user_id} to group '{group.group_name}' ({group.display_id})")
     else:
-        await message.answer("❌ Failed to add user to group. Please try again.")
+        await message.answer("❌ Не удалось добавить пользователя в группу. Возможно, он уже в этой группе.")
 
     await state.clear()
 
@@ -2547,3 +2522,28 @@ async def setslots_apply(message: types.Message, state: FSMContext):
         )
     else:
         await message.answer("❌ Не удалось обновить слоты. Попробуйте снова.")
+
+
+@admin_router.message(Command("notfull"))
+async def cmd_notfull(message: types.Message):
+    """Show groups with fewer than 6 members"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    if not is_admin(message.from_user.id, settings.tg_admin_ids):
+        return
+
+    groups = await db.get_groups_with_member_count()
+    incomplete = [g for g in groups if g['member_count'] < 6]
+
+    if not incomplete:
+        await message.answer("✅ Все группы заполнены (6/6).")
+        return
+
+    lines = [f"<b>Группы не на 6 человек ({len(incomplete)}):</b>\n"]
+    for g in incomplete:
+        lines.append(
+            f"📁 <b>{g['group_name']}</b> (ID: {g['display_id']}) — "
+            f"{g['member_count']}/6"
+        )
+
+    await message.answer("\n".join(lines), parse_mode="HTML")

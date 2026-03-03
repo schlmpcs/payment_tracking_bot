@@ -40,6 +40,9 @@ def get_admin_main_keyboard() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="👥 Управление участниками", callback_data="admin_manage_members")
     )
+    builder.row(
+        InlineKeyboardButton(text="➕ Добавить пользователя", callback_data="admin_add_user")
+    )
 
     return builder.as_markup()
 

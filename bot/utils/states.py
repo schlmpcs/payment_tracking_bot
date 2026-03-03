@@ -23,7 +23,6 @@ class AdminStates(StatesGroup):
     creating_group = State()
     creating_group_date = State()
     adding_user_username = State()
-    adding_user_group = State()
     deleting_group_select = State()
     deleting_group_confirm = State()
     removing_user_select_group = State()
