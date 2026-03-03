@@ -617,7 +617,7 @@ class Database:
                         g.payment_day_of_month,
                         g.next_payment_date,
                         g.created_at,
-                        COUNT(ug.user_id) as member_count
+                        COALESCE(SUM(ug.slots), 0) as member_count
                     FROM groups g
                     LEFT JOIN user_groups ug ON g.group_id = ug.group_id
                     GROUP BY g.group_id, g.group_name, g.display_id, g.payment_day_of_month, g.next_payment_date, g.created_at
