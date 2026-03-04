@@ -37,3 +37,4 @@ class AdminStates(StatesGroup):
     broadcasting_confirm = State()
     setting_slots_group = State()
     setting_slots_user = State()
+    ru_fraud_check_date = State()

@@ -2612,7 +2612,8 @@ async def cmd_adminhelp(message: types.Message):
         "/import_groups — импортировать группы из файла\n"
         "\n"
         "<b>— Проверки —</b>\n"
-        "/fraudcheck — проверка дублей платежей по выписке Kaspi\n"
+        "/fraudcheck — проверка дублей платежей по выписке Kaspi (KZ)\n"
+        "/fraudcheck_ru — сверка платежей RU по дате (количество + сумма)\n"
         "/backfill_receipts — восстановить номера чеков из файлов\n"
         "/fixusers — исправить повреждённые имена пользователей через Telegram\n"
         "\n"
@@ -2652,5 +2653,80 @@ async def cmd_overdue(message: types.Message):
             f"👥 Группа: {s.group_name} ({s.group_display_id})\n"
             f"📅 Срок был: {format_date(s.next_payment_date)} | Просрочка: <b>{s.days_overdue} дн.</b>\n"
         )
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@admin_router.message(Command("fraudcheck_ru"))
+async def fraudcheck_ru_start(message: types.Message, state: FSMContext):
+    """Start RU fraud check — ask for date"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    if not is_admin(message.from_user.id, settings.tg_admin_ids):
+        return
+
+    await message.answer(
+        "🇷🇺 <b>Проверка платежей RU</b>\n\n"
+        "Введите дату для проверки (ДД.ММ.ГГГГ):\n"
+        "Например: <code>04.03.2026</code>",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminStates.ru_fraud_check_date)
+
+
+@admin_router.message(StateFilter(AdminStates.ru_fraud_check_date))
+async def fraudcheck_ru_process(message: types.Message, state: FSMContext):
+    """Show RU payment checksum for the given date"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    if not is_admin(message.from_user.id, settings.tg_admin_ids):
+        return
+
+    await state.clear()
+
+    text = message.text.strip()
+    try:
+        from datetime import datetime as dt
+        check_date = dt.strptime(text, "%d.%m.%Y").date()
+    except ValueError:
+        await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГГГ")
+        return
+
+    payments = await db.get_ru_payments_on_date(check_date)
+    ru_price = settings.bot_ru_payment_price
+
+    if not payments:
+        await message.answer(
+            f"📭 За <b>{text}</b> платежей от RU клиентов не найдено.",
+            parse_mode="HTML"
+        )
+        return
+
+    total_amount = 0
+    lines = [f"🇷🇺 <b>Платежи RU за {text}</b>\n"]
+
+    for p in payments:
+        name = p['first_name'] or "N/A"
+        username = f"@{p['username']}" if p['username'] else "нет username"
+        slots = p['slots']
+        months = p['months_paid']
+        amount = ru_price * slots * months
+        total_amount += amount
+
+        slot_note = f" × {slots} слота" if slots > 1 else ""
+        month_note = f" × {months} мес." if months > 1 else ""
+        lines.append(
+            f"👤 {name} ({username})\n"
+            f"   🆔 {p['user_display_id']} | 👥 {p['group_display_id']}\n"
+            f"   💰 {ru_price} ₽{slot_note}{month_note} = <b>{amount:.0f} ₽</b>\n"
+        )
+
+    lines.append(
+        f"─────────────────\n"
+        f"📊 Транзакций: <b>{len(payments)}</b>\n"
+        f"💰 Ожидаемая сумма: <b>{total_amount:.0f} ₽</b>\n\n"
+        f"Сверьте с выпиской банка.\n"
+        f"Если суммы или количество не совпадают — возможен фрод."
+    )
 
     await message.answer("\n".join(lines), parse_mode="HTML")

@@ -1218,6 +1218,40 @@ class Database:
             return []
             return []
 
+    async def get_ru_payments_on_date(self, date) -> List[dict]:
+        """Get all RU payments recorded on a given date with user and group info"""
+        if not self.pool:
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        p.payment_id,
+                        p.user_id,
+                        u.username,
+                        u.first_name,
+                        u.display_id as user_display_id,
+                        g.group_name,
+                        g.display_id as group_display_id,
+                        p.months_paid,
+                        COALESCE(ug.slots, 1) as slots,
+                        p.payment_date
+                    FROM payments p
+                    JOIN users u ON p.user_id = u.user_id
+                    JOIN groups g ON p.group_id = g.group_id
+                    JOIN user_groups ug ON ug.user_id = p.user_id AND ug.group_id = p.group_id
+                    WHERE DATE(p.payment_date) = $1
+                      AND g.display_id LIKE '1%'
+                    ORDER BY p.payment_date
+                    """,
+                    date
+                )
+                return [dict(row) for row in rows]
+        except Exception as e:
+            self.logger.error(f"Failed to get RU payments on date: {e}")
+            return []
+
     async def is_user_registered(self, user_id: int) -> bool:
         """Check if user is registered in any group"""
         if not self.pool:
