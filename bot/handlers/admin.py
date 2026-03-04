@@ -2606,6 +2606,7 @@ async def cmd_adminhelp(message: types.Message):
         "<b>— Пользователи и группы —</b>\n"
         "/setslots — установить количество слотов пользователю в группе\n"
         "/notfull — показать группы с менее чем 6 участниками\n"
+        "/overdue — показать пользователей с просрочкой 3+ дней (под отключение)\n"
         "/paid_in_advance — показать пользователей, оплативших вперёд\n"
         "/update_due_date — обновить дату следующего платежа для группы\n"
         "/import_groups — импортировать группы из файла\n"
@@ -2625,3 +2626,31 @@ async def cmd_adminhelp(message: types.Message):
         "/adminhelp — эта справка\n",
         parse_mode="HTML"
     )
+
+
+@admin_router.message(Command("overdue"))
+async def cmd_overdue(message: types.Message):
+    """Show all users overdue by more than 3 days"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    if not is_admin(message.from_user.id, settings.tg_admin_ids):
+        return
+
+    overdue = await db.get_users_overdue_for_admin_warning(3)
+
+    if not overdue:
+        await message.answer("✅ Нет пользователей с просрочкой более 3 дней.")
+        return
+
+    lines = [f"🚨 <b>Просрочка 3+ дней ({len(overdue)}):</b>\n"]
+    for s in overdue:
+        name = s.first_name or "N/A"
+        username = f"@{s.username}" if s.username else "нет username"
+        lines.append(
+            f"👤 <b>{name}</b> ({username})\n"
+            f"🆔 ID: {s.user_display_id} | <code>{s.user_id}</code>\n"
+            f"👥 Группа: {s.group_name} ({s.group_display_id})\n"
+            f"📅 Срок был: {format_date(s.next_payment_date)} | Просрочка: <b>{s.days_overdue} дн.</b>\n"
+        )
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
