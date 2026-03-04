@@ -393,7 +393,7 @@ class Database:
         try:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT user_id FROM users WHERE username = 'user_' || user_id::text"
+                    "SELECT user_id FROM users WHERE username IS NULL OR username = 'user_' || user_id::text"
                 )
                 return [row['user_id'] for row in rows]
         except Exception as e:

@@ -2568,7 +2568,7 @@ async def cmd_fixusers(message: types.Message):
     await message.answer(f"🔄 Исправляю данные для {len(corrupted)} пользователей...")
 
     fixed = 0
-    failed = 0
+    failed_ids = []
     for user_id in corrupted:
         try:
             chat = await message.bot.get_chat(user_id)
@@ -2577,9 +2577,51 @@ async def cmd_fixusers(message: types.Message):
             await db.add_user(user_id, username, first_name)
             fixed += 1
         except Exception:
-            failed += 1
+            failed_ids.append(user_id)
 
     lines = [f"✅ Исправлено: {fixed}"]
-    if failed:
-        lines.append(f"❌ Не удалось получить данные: {failed} (пользователи не писали боту)")
-    await message.answer("\n".join(lines))
+    if failed_ids:
+        lines.append(f"❌ Не удалось получить данные ({len(failed_ids)}):")
+        for uid in failed_ids:
+            lines.append(f"  • <code>{uid}</code>")
+        lines.append("(пользователи не писали боту)")
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@admin_router.message(Command("adminhelp"))
+async def cmd_adminhelp(message: types.Message):
+    """Show all available admin commands"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    if not is_admin(message.from_user.id, settings.tg_admin_ids):
+        return
+
+    await message.answer(
+        "<b>📋 Команды администратора</b>\n"
+        "\n"
+        "<b>— Основные —</b>\n"
+        "/admin — главное меню (группы, статистика, участники)\n"
+        "/broadcast — отправить сообщение всем пользователям\n"
+        "\n"
+        "<b>— Пользователи и группы —</b>\n"
+        "/setslots — установить количество слотов пользователю в группе\n"
+        "/notfull — показать группы с менее чем 6 участниками\n"
+        "/paid_in_advance — показать пользователей, оплативших вперёд\n"
+        "/update_due_date — обновить дату следующего платежа для группы\n"
+        "/import_groups — импортировать группы из файла\n"
+        "\n"
+        "<b>— Проверки —</b>\n"
+        "/fraudcheck — проверка дублей платежей по выписке Kaspi\n"
+        "/backfill_receipts — восстановить номера чеков из файлов\n"
+        "/fixusers — исправить повреждённые имена пользователей через Telegram\n"
+        "\n"
+        "<b>— Уведомления (тест) —</b>\n"
+        "/check_notifications — проверить статус уведомлений\n"
+        "/test_notifications — тест рассылки уведомлений\n"
+        "/test_admin_notification — тест уведомления для админа\n"
+        "\n"
+        "<b>— Прочее —</b>\n"
+        "/link_group — привязать Telegram-чат к группе (в чате: /link_group 001)\n"
+        "/adminhelp — эта справка\n",
+        parse_mode="HTML"
+    )
