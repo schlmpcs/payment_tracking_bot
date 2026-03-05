@@ -140,3 +140,6 @@ uploads/
 
 # Local audit / personal notes (not for version control)
 AUDIT.md
+AGENT_CONTEXT.md
+/docs  
+/.claude

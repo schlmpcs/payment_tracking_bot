@@ -13,7 +13,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.database.operations import Database
 from bot.config.settings import Settings
 from bot.utils.states import PaymentStates, JoinStates
-from bot.utils.keyboards import get_months_keyboard, get_user_main_menu, get_unregistered_user_menu
+from bot.utils.keyboards import get_months_keyboard, get_user_main_menu, get_unregistered_user_menu, get_status_keyboard
 from bot.utils.receipt_parser import parse_kaspi_receipt
 from bot.utils.helpers import (
     format_date, calculate_days_until,
@@ -205,10 +205,7 @@ async def handle_user_status(callback: types.CallbackQuery):
     if status.last_payment_date:
         response += f"💰 Последний платёж: {format_date(status.last_payment_date)}\n"
 
-    if days_until <= 3:
-        response += f"\n💡 Используйте /pay для совершения платежа"
-
-    await callback.message.answer(response, parse_mode="HTML", reply_markup=get_user_main_menu())
+    await callback.message.answer(response, parse_mode="HTML", reply_markup=get_status_keyboard())
     await callback.answer()
 
 
@@ -622,10 +619,7 @@ async def status_command(message: types.Message):
         if days_until <= 3:
             any_due_soon = True
 
-    if any_due_soon:
-        response += "💡 Используйте /pay для совершения платежа"
-
-    await message.answer(response, parse_mode="HTML", reply_markup=get_user_main_menu())
+    await message.answer(response, parse_mode="HTML", reply_markup=get_status_keyboard())
 
 
 @user_router.message(Command("pay"))

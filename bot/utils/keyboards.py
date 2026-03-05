@@ -9,39 +9,40 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def get_months_keyboard() -> InlineKeyboardMarkup:
     """Create keyboard for selecting payment months"""
     builder = InlineKeyboardBuilder()
-    
+
+    number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
     for i in range(1, 7):
-        text = f"{i} месяц{'ев' if i > 1 else ''}"
+        text = f"{number_emojis[i-1]} {i} мес."
         builder.button(text=text, callback_data=f"months_{i}")
-    
+
     builder.adjust(2)  # 2 buttons per row
     builder.row(
-        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment")
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment", style="danger")
     )
-    
+
     return builder.as_markup()
 
 
 def get_admin_main_keyboard() -> InlineKeyboardMarkup:
     """Create main admin keyboard"""
     builder = InlineKeyboardBuilder()
-    
+
     builder.row(
-        InlineKeyboardButton(text="👥 Просмотр групп", callback_data="admin_view_groups")
+        InlineKeyboardButton(text="👁 Просмотр групп", callback_data="admin_view_groups", style="primary")
     )
     builder.row(
-        InlineKeyboardButton(text="📈 Статистика 🇰🇿", callback_data="admin_stats_kz"),
-        InlineKeyboardButton(text="📈 Статистика 🇷🇺", callback_data="admin_stats_ru")
+        InlineKeyboardButton(text="📊 Статистика 🇰🇿", callback_data="admin_stats_kz", style="primary"),
+        InlineKeyboardButton(text="📊 Статистика 🇷🇺", callback_data="admin_stats_ru", style="primary")
     )
     builder.row(
-        InlineKeyboardButton(text="➕ Создать группу", callback_data="admin_create_group"),
-        InlineKeyboardButton(text="🗑️ Удалить группу", callback_data="admin_delete_group")
+        InlineKeyboardButton(text="✅ Создать группу", callback_data="admin_create_group", style="success"),
+        InlineKeyboardButton(text="🗑️ Удалить группу", callback_data="admin_delete_group", style="danger")
     )
     builder.row(
-        InlineKeyboardButton(text="👥 Управление участниками", callback_data="admin_manage_members")
+        InlineKeyboardButton(text="⚙️ Управление участниками", callback_data="admin_manage_members", style="primary")
     )
     builder.row(
-        InlineKeyboardButton(text="➕ Добавить пользователя", callback_data="admin_add_user")
+        InlineKeyboardButton(text="➕ Добавить пользователя", callback_data="admin_add_user", style="success")
     )
 
     return builder.as_markup()
@@ -52,8 +53,8 @@ def get_confirmation_keyboard(action: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     builder.row(
-        InlineKeyboardButton(text="✅ Да", callback_data=f"confirm_{action}"),
-        InlineKeyboardButton(text="❌ Нет", callback_data=f"cancel_{action}")
+        InlineKeyboardButton(text="✅ Да", callback_data=f"confirm_{action}", style="success"),
+        InlineKeyboardButton(text="❌ Нет", callback_data=f"cancel_{action}", style="danger")
     )
     
     return builder.as_markup()
@@ -64,8 +65,8 @@ def get_user_main_menu() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     builder.row(
-        InlineKeyboardButton(text="💳 Оплатить", callback_data="user_pay"),
-        InlineKeyboardButton(text="📊 Статус", callback_data="user_status")
+        InlineKeyboardButton(text="💳 Оплатить", callback_data="user_pay", style="success"),
+        InlineKeyboardButton(text="📊 Статус", callback_data="user_status", style="primary")
     )
     builder.row(
         InlineKeyboardButton(text="❓ Помощь", callback_data="user_help")
@@ -74,12 +75,27 @@ def get_user_main_menu() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_status_keyboard() -> InlineKeyboardMarkup:
+    """Create keyboard shown after status display — pay is the primary CTA"""
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(text="💳 Оплатить", callback_data="user_pay", style="success")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📊 Статус", callback_data="user_status", style="primary"),
+        InlineKeyboardButton(text="❓ Помощь", callback_data="user_help")
+    )
+
+    return builder.as_markup()
+
+
 def get_unregistered_user_menu() -> InlineKeyboardMarkup:
     """Create menu keyboard for unregistered users with Join button"""
     builder = InlineKeyboardBuilder()
     
     builder.row(
-        InlineKeyboardButton(text="🚪 Присоединиться", callback_data="user_join")
+        InlineKeyboardButton(text="🚪 Присоединиться", callback_data="user_join", style="success")
     )
     builder.row(
         InlineKeyboardButton(text="❓ Помощь", callback_data="user_help")

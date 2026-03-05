@@ -1633,9 +1633,9 @@ async def handle_import_file(message: types.Message, state: FSMContext):
                 builder = InlineKeyboardBuilder()
                 builder.row(
                     types.InlineKeyboardButton(
-                        text="✅ Да", callback_data="confirm_yes"),
+                        text="✅ Да", callback_data="confirm_yes", style="success"),
                     types.InlineKeyboardButton(
-                        text="❌ Нет", callback_data="confirm_no")
+                        text="❌ Нет", callback_data="confirm_no", style="danger")
                 )
 
                 await message.answer(
@@ -1841,9 +1841,9 @@ async def delete_group_confirm(message: types.Message, state: FSMContext):
     builder = InlineKeyboardBuilder()
     builder.row(
         types.InlineKeyboardButton(
-            text="🗑️ ДА, УДАЛИТЬ", callback_data="confirm_delete_group"),
+            text="🗑️ ДА, УДАЛИТЬ", callback_data="confirm_delete_group", style="danger"),
         types.InlineKeyboardButton(
-            text="❌ Отменить", callback_data="cancel_delete_group")
+            text="❌ Отменить", callback_data="cancel_delete_group", style="danger")
     )
 
     await message.answer(
