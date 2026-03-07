@@ -132,9 +132,9 @@ async def handle_user_pay(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # Get user's current status
-    status = await db.get_user_payment_status(user_id)
-    if not status:
+    # Get status for all groups user belongs to
+    statuses = await db.get_all_user_payment_statuses(user_id)
+    if not statuses:
         await callback.message.answer(
             "❌ Не удается получить информацию о ваших платежах.\n"
             "Пожалуйста, обратитесь к администратору.",
@@ -143,17 +143,37 @@ async def handle_user_pay(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # Ask user to select months
-    await callback.message.answer(
-        f"💳 <b>Оплата подписки</b>\n\n"
-        f"👥 Группа: {status.group_name}\n"
-        f"📅 Следующий платёж: {format_date(status.next_payment_date)}\n\n"
-        f"Выберите количество месяцев для оплаты:",
-        reply_markup=get_months_keyboard(),
-        parse_mode="HTML"
-    )
+    if len(statuses) == 1:
+        # Single group — go straight to month selection
+        status = statuses[0]
+        await state.update_data(selected_group_id=status.group_id)
+        days_until = calculate_days_until(status.next_payment_date)
+        emoji = get_payment_status_emoji(days_until)
+        await callback.message.answer(
+            f"💳 <b>Оплата для группы: {status.group_name}</b>\n\n"
+            f"{emoji} Следующий платёж до: {format_date(status.next_payment_date)}\n"
+            f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
+            f"Пожалуйста, выберите на сколько месяцев хотите заплатить:",
+            reply_markup=get_months_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(PaymentStates.selecting_months)
+    else:
+        # Multiple groups — show group selector
+        builder = InlineKeyboardBuilder()
+        for s in statuses:
+            days_until = calculate_days_until(s.next_payment_date)
+            emoji = get_payment_status_emoji(days_until)
+            label = f"{s.group_name} — до {format_date(s.next_payment_date)} {emoji}"
+            builder.button(text=label, callback_data=f"pay_group_{s.group_id}")
+        builder.adjust(1)
+        await callback.message.answer(
+            "💳 <b>Выберите группу для оплаты:</b>",
+            reply_markup=builder.as_markup(),
+            parse_mode="HTML"
+        )
+        await state.set_state(PaymentStates.selecting_group)
 
-    await state.set_state(PaymentStates.selecting_months)
     await callback.answer()
 
 
