@@ -180,9 +180,9 @@ async def handle_user_status(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    # Get payment status
-    status = await db.get_user_payment_status(user_id)
-    if not status:
+    # Get payment status for all groups
+    statuses = await db.get_all_user_payment_statuses(user_id)
+    if not statuses:
         await callback.message.answer(
             "❌ Не удается получить информацию о ваших платежах.\n"
             "Пожалуйста, обратитесь к администратору.",
@@ -191,19 +191,23 @@ async def handle_user_status(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    days_until = calculate_days_until(status.next_payment_date)
-    emoji = get_payment_status_emoji(days_until)
-    status_text = get_payment_status_text(days_until)
+    response = "📊 <b>Статус платежей</b>\n\n"
 
-    response = (
-        f"{emoji} <b>Статус платежей</b>\n\n"
-        f"👥 Группа: {status.group_name}\n"
-        f"📅 Следующий платёж до: {format_date(status.next_payment_date)}\n"
-        f"📊 Статус: {status_text}\n"
-    )
+    for status in statuses:
+        days_until = calculate_days_until(status.next_payment_date)
+        emoji = get_payment_status_emoji(days_until)
+        status_text = get_payment_status_text(days_until)
 
-    if status.last_payment_date:
-        response += f"💰 Последний платёж: {format_date(status.last_payment_date)}\n"
+        response += (
+            f"{emoji} <b>{status.group_name}</b>\n"
+            f"📅 Следующий платёж до: {format_date(status.next_payment_date)}\n"
+            f"📊 Статус: {status_text}\n"
+        )
+        if status.last_payment_date:
+            response += f"💰 Последний платёж: {format_date(status.last_payment_date)}\n"
+        if status.slots > 1:
+            response += f"🔢 Слотов: {status.slots}\n"
+        response += "\n"
 
     await callback.message.answer(response, parse_mode="HTML", reply_markup=get_status_keyboard())
     await callback.answer()
