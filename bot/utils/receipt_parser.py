@@ -60,6 +60,36 @@ def parse_kaspi_receipt(pdf_path: str) -> Optional[str]:
         return None
 
 
+def parse_kaspi_receipt_amount(pdf_path: str) -> Optional[int]:
+    """
+    Parse Kaspi receipt PDF and extract payment amount in tenge.
+
+    Args:
+        pdf_path: Path to PDF file
+
+    Returns:
+        Amount as integer (e.g. 700, 1400) or None if not found
+    """
+    try:
+        text = ""
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+
+        # Match digits (possibly with space thousands-separator) followed by ₸
+        match = re.search(r'([\d][\d\s]*)\s*₸', text)
+        if match:
+            amount_str = match.group(1).replace(' ', '').strip()
+            return int(amount_str)
+
+        logger.warning(f"Could not find amount in {pdf_path}")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error parsing receipt amount {pdf_path}: {e}")
+        return None
+
+
 def load_kaspi_statement(file_path: str) -> Set[str]:
     """
     Load Kaspi statement and return set of operation numbers

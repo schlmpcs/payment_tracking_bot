@@ -14,7 +14,7 @@ from bot.database.operations import Database
 from bot.config.settings import Settings
 from bot.utils.states import PaymentStates, JoinStates
 from bot.utils.keyboards import get_months_keyboard, get_user_main_menu, get_unregistered_user_menu, get_status_keyboard
-from bot.utils.receipt_parser import parse_kaspi_receipt
+from bot.utils.receipt_parser import parse_kaspi_receipt, parse_kaspi_receipt_amount
 from bot.utils.helpers import (
     format_date, calculate_days_until,
     get_payment_status_emoji, get_payment_status_text,
@@ -768,12 +768,13 @@ async def handle_months_selection(callback: types.CallbackQuery, state: FSMConte
         if status.slots > 1 else ""
     )
 
+    formats_note = "📎 Поддерживаемый формат: PDF" if region == 'kz' else "📎 Поддерживаемые форматы: JPG, PNG, PDF"
+
     await callback.message.edit_text(
         f"✅ Вы выбрали <b>{months} месяц{'ев' if months > 1 else ''}</b>\n\n"
         f"💰 <b>Нужно оплатить:</b> {amount} {currency}{slots_note}\n\n"
         f"{payment_info['payment_text']}\n\n"
-        f"📎 Пожалуйста, загрузите чек об оплате\n\n"
-        f"💡 Поддерживаемые форматы: JPG, PNG, PDF\n"
+        f"{formats_note}\n"
         f"После загрузки ваш платёж будет обработан автоматически.\n\n"
         f"💡 <i>Используйте /start для отмены операции</i>",
         parse_mode="HTML"
@@ -794,6 +795,15 @@ async def cancel_payment(callback: types.CallbackQuery, state: FSMContext):
 @user_router.message(StateFilter(PaymentStates.uploading_receipt), F.photo)
 async def handle_photo_receipt(message: types.Message, state: FSMContext):
     """Handle photo receipt upload"""
+    data = await state.get_data()
+    selected_group_id = data.get('selected_group_id')
+    status = await db.get_user_payment_status(message.from_user.id, selected_group_id)
+    if status and get_region_from_group_id(status.group_display_id) == 'kz':
+        await message.answer(
+            "❌ Для клиентов Казахстана принимаются только PDF чеки.\n\n"
+            "📎 Откройте чек в Kaspi → нажмите «Поделиться» → отправьте как файл (PDF)"
+        )
+        return
     await process_receipt_upload(message, state, message.photo[-1].file_id)
 
 
@@ -802,8 +812,18 @@ async def handle_document_receipt(message: types.Message, state: FSMContext):
     """Handle document receipt upload"""
     document = message.document
 
-    if not validate_file_type(document.mime_type):
-        # Log the rejected MIME type for debugging
+    # For KZ clients, only PDF is accepted
+    data = await state.get_data()
+    selected_group_id = data.get('selected_group_id')
+    status = await db.get_user_payment_status(message.from_user.id, selected_group_id)
+    if status and get_region_from_group_id(status.group_display_id) == 'kz':
+        if document.mime_type not in ('application/pdf', 'application/x-pdf', 'application/acrobat'):
+            await message.answer(
+                "❌ Для клиентов Казахстана принимаются только PDF чеки.\n\n"
+                "📎 Откройте чек в Kaspi → нажмите «Поделиться» → отправьте как файл (PDF)"
+            )
+            return
+    elif not validate_file_type(document.mime_type):
         logger.warning(
             f"Rejected file upload from user {message.from_user.id}: "
             f"mime_type='{document.mime_type}', file_name='{document.file_name}'"
@@ -890,22 +910,65 @@ async def process_receipt_upload(message: types.Message, state: FSMContext, file
         # Download file for parsing
         file = await message.bot.get_file(file_id)
         file_path = file.file_path
-        
+
         # Create temp file
         import tempfile
         import os
-        from bot.utils.receipt_parser import parse_kaspi_receipt
-        
+
         # Use temp file
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
             temp_file_name = temp_file.name
-        
+
         # Download
         await message.bot.download_file(file_path, temp_file_name)
-        
-        # Parse
+
+        # Parse op number and amount
         op_number = parse_kaspi_receipt(temp_file_name)
-        
+
+        # For KZ clients: verify the amount in the PDF matches what was selected
+        region = get_region_from_group_id(status.group_display_id)
+        if region == 'kz':
+            payment_info = get_payment_info(region, settings)
+            expected_amount = int(months * payment_info['price'] * status.slots)
+            paid_amount = parse_kaspi_receipt_amount(temp_file_name)
+
+            if paid_amount is not None and paid_amount != expected_amount:
+                try:
+                    os.remove(temp_file_name)
+                except OSError:
+                    pass
+
+                user_mention = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+                for admin_id in settings.tg_admin_ids:
+                    try:
+                        await message.bot.send_message(
+                            chat_id=admin_id,
+                            text=(
+                                f"⚠️ <b>Несоответствие суммы платежа</b>\n\n"
+                                f"👤 Пользователь: {user_mention} (ID: {user_id})\n"
+                                f"👥 Группа: {status.group_name}\n"
+                                f"📅 Месяцев выбрано: {months}\n"
+                                f"💰 Ожидаемая сумма: <b>{expected_amount} ₸</b>\n"
+                                f"💸 В чеке указано: <b>{paid_amount} ₸</b>\n\n"
+                                f"Платёж отклонён автоматически."
+                            ),
+                            parse_mode="HTML"
+                        )
+                        await message.forward(admin_id)
+                    except Exception as e:
+                        logger.error(f"Failed to notify admin {admin_id} about amount mismatch: {e}")
+
+                await message.answer(
+                    f"❌ <b>Сумма платежа не совпадает</b>\n\n"
+                    f"💰 Ожидаемая сумма: <b>{expected_amount} ₸</b>\n"
+                    f"💸 В чеке указано: <b>{paid_amount} ₸</b>\n\n"
+                    f"Пожалуйста, оплатите правильную сумму и загрузите новый чек.",
+                    parse_mode="HTML",
+                    reply_markup=get_user_main_menu()
+                )
+                await state.clear()
+                return
+
         # Cleanup
         try:
             os.remove(temp_file_name)

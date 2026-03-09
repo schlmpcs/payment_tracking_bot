@@ -192,6 +192,25 @@ class Database:
             self.logger.error(f"❌ Failed to add slots column to user_groups: {e}")
             return False
 
+        # Add is_phantom column to user_groups if not present
+        try:
+            async with self.pool.acquire() as conn:
+                phantom_exists = await conn.fetchval("""
+                    SELECT EXISTS(
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'user_groups' AND column_name = 'is_phantom'
+                    )
+                """)
+                if not phantom_exists:
+                    self.logger.info("🔄 Adding is_phantom column to user_groups...")
+                    await conn.execute(
+                        "ALTER TABLE user_groups ADD COLUMN is_phantom BOOLEAN NOT NULL DEFAULT FALSE"
+                    )
+                    self.logger.info("✅ is_phantom column added to user_groups")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to add is_phantom column to user_groups: {e}")
+            return False
+
         return True
 
     async def _migrate_display_ids(self, conn):
@@ -726,6 +745,62 @@ class Database:
                 f"Failed to add user {user_id} to group {group_id}: {e}")
             return False
 
+    async def add_phantom_to_group(self, group_id: int) -> bool:
+        """
+        Add a phantom (free, non-paying) user to a group.
+        Phantom users occupy a slot but never receive reminders or show as overdue.
+        Uses negative user IDs which can never conflict with real Telegram IDs.
+        """
+        if not self.pool:
+            return False
+
+        try:
+            async with self.pool.acquire() as conn:
+                # Find next available negative user_id
+                min_id = await conn.fetchval("SELECT MIN(user_id) FROM users WHERE user_id < 0")
+                phantom_id = (min_id - 1) if min_id is not None else -1
+
+                phantom_num = abs(phantom_id)
+                username = f"phantom_{phantom_num}"
+
+                # Insert phantom user record
+                display_id = await self._get_next_user_display_id()
+                await conn.execute(
+                    """
+                    INSERT INTO users (user_id, username, display_id, first_name)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    phantom_id, username, display_id, f"Phantom {phantom_num}"
+                )
+
+                # Add to group with is_phantom = TRUE
+                await conn.execute(
+                    """
+                    INSERT INTO user_groups (user_id, group_id, is_phantom)
+                    VALUES ($1, $2, TRUE)
+                    ON CONFLICT (user_id, group_id) DO NOTHING
+                    """,
+                    phantom_id, group_id
+                )
+
+                # Create payment with next_payment_date far in the future (infinite)
+                from datetime import date
+                infinite_date = date(9999, 12, 31)
+                await conn.execute(
+                    """
+                    INSERT INTO payments (user_id, group_id, months_paid, payment_date, next_payment_date, receipt_file_id)
+                    VALUES ($1, $2, 0, NOW(), $3, NULL)
+                    """,
+                    phantom_id, group_id, infinite_date
+                )
+
+                self.logger.info(f"Added phantom user {phantom_id} ({username}) to group {group_id}")
+                return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to add phantom to group {group_id}: {e}")
+            return False
+
     async def get_user_group(self, user_id: int) -> Optional[Group]:
         """Get user's payment group"""
         if not self.pool:
@@ -1028,9 +1103,10 @@ class Database:
                     FROM user_groups ug
                     JOIN groups g ON ug.group_id = g.group_id
                     JOIN users u ON ug.user_id = u.user_id
-                    WHERE COALESCE(
-                        (SELECT next_payment_date FROM payments 
-                         WHERE user_id = ug.user_id AND group_id = g.group_id 
+                    WHERE ug.is_phantom = FALSE
+                    AND COALESCE(
+                        (SELECT next_payment_date FROM payments
+                         WHERE user_id = ug.user_id AND group_id = g.group_id
                          ORDER BY payment_date DESC LIMIT 1),
                         g.next_payment_date
                     ) < CURRENT_DATE
@@ -1097,9 +1173,10 @@ class Database:
                     FROM user_groups ug
                     JOIN groups g ON ug.group_id = g.group_id
                     JOIN users u ON ug.user_id = u.user_id
-                    WHERE DATE(COALESCE(
-                        (SELECT next_payment_date FROM payments 
-                         WHERE user_id = ug.user_id AND group_id = g.group_id 
+                    WHERE ug.is_phantom = FALSE
+                    AND DATE(COALESCE(
+                        (SELECT next_payment_date FROM payments
+                         WHERE user_id = ug.user_id AND group_id = g.group_id
                          ORDER BY payment_date DESC LIMIT 1),
                         g.next_payment_date
                     )) BETWEEN CURRENT_DATE - INTERVAL '3 days' AND CURRENT_DATE

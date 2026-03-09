@@ -971,6 +971,45 @@ async def add_user_finish(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+@admin_router.message(Command("addphantom"))
+async def add_phantom_command(message: types.Message):
+    """Add a phantom (free, non-paying) user to a group. Usage: /addphantom GROUP_ID"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
+    user_id = message.from_user.id
+    if not is_admin(user_id, settings.tg_admin_ids):
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) != 2:
+        await message.answer(
+            "❌ Неверный формат.\n\n"
+            "Использование: <code>/addphantom ID_ГРУППЫ</code>\n"
+            "Например: <code>/addphantom 001</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    group_display_id = parts[1].strip()
+    group = await db.get_group_by_display_id(group_display_id)
+    if not group:
+        await message.answer(f"❌ Группа с ID <code>{group_display_id}</code> не найдена.", parse_mode="HTML")
+        return
+
+    success = await db.add_phantom_to_group(group.group_id)
+    if success:
+        await message.answer(
+            f"👻 <b>Фантом добавлен!</b>\n\n"
+            f"👥 Группа: {group.group_name} (ID: {group.display_id})\n"
+            f"💡 Фантом занимает слот, не платит и не получает уведомлений.",
+            parse_mode="HTML"
+        )
+        logger.info(f"Admin {user_id} added phantom to group '{group.group_name}' ({group.display_id})")
+    else:
+        await message.answer("❌ Не удалось добавить фантома в группу.")
+
+
 @admin_router.callback_query(F.data == "admin_update_due_date")
 async def update_due_date_start(callback: types.CallbackQuery, state: FSMContext):
     """Start due date update process"""
