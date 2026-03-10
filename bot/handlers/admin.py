@@ -2044,10 +2044,11 @@ async def show_group_members(message: types.Message, state: FSMContext):
     )
 
     for member in members:
+        from html import escape
         last_payment = "Никогда" if not member['last_payment'] else member['last_payment'].strftime(
             '%Y-%m-%d')
-        username_display = f"@{member['username']}" if member['username'] else 'нет username'
-        first_name = member['first_name'] or 'N/A'
+        username_display = f"@{escape(member['username'])}" if member['username'] else 'нет username'
+        first_name = escape(member['first_name'] or 'N/A')
 
         slots = member.get('slots', 1)
         slots_line = f"🔢 Слотов: {slots}\n" if slots > 1 else ""
