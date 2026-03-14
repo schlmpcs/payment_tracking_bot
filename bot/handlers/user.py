@@ -13,7 +13,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.database.operations import Database
 from bot.config.settings import Settings
 from bot.utils.states import PaymentStates, JoinStates
-from bot.utils.keyboards import get_months_keyboard, get_user_main_menu, get_unregistered_user_menu, get_status_keyboard
+from bot.utils.keyboards import (
+    get_months_keyboard, get_user_main_menu, get_unregistered_user_menu, get_status_keyboard,
+    get_main_reply_keyboard, get_unregistered_reply_keyboard,
+    BTN_PAY, BTN_JOIN, BTN_HELP,
+)
 from bot.utils.receipt_parser import parse_kaspi_receipt, parse_kaspi_receipt_amount
 from bot.utils.helpers import (
     format_date, calculate_days_until,
@@ -75,7 +79,7 @@ async def start_command(message: types.Message, state: FSMContext):
                     f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
                     f"Выберите действие:"
                 )
-                await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_user_main_menu())
+                await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_main_reply_keyboard())
                 return
             else:
                 welcome_text = (
@@ -101,11 +105,11 @@ async def start_command(message: types.Message, state: FSMContext):
             f"Пожалуйста, попробуйте позже."
         )
 
-    # Use different menu based on registration status
+    # Use different reply keyboard based on registration status
     if db and db.pool and not await db.is_user_registered(message.from_user.id):
-        await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_unregistered_user_menu())
+        await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_unregistered_reply_keyboard())
     else:
-        await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_user_main_menu())
+        await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_main_reply_keyboard())
 
 
 # Callback handlers for user menu buttons
@@ -238,24 +242,8 @@ async def handle_user_help(callback: types.CallbackQuery):
     """Handle Help button from menu"""
     help_text = (
         "🤖 <b>Справка по боту Spotify Payment</b>\n\n"
-        "<b>Доступные команды:</b>\n"
-        "🏠 /start - Приветственное сообщение и обзор статуса\n"
-        "🆔 /id - Показать ваш ID для администратора\n"
-        "🚪 /join - Присоединиться к группе оплаты\n"
-        "💳 /pay - Загрузить чек об оплате\n"
-        "📊 /status - Проверить статус ваших платежей\n"
-        "📈 /history - Показать историю платежей\n"
-        "❓ /help - Показать эту справку\n\n"
-        "<b>Как оплатить:</b>\n"
-        "1. Используйте команду /pay\n"
-        "2. Выберите количество месяцев для оплаты (1-6)\n"
-        "3. Загрузите чек банковского перевода\n"
-        "4. Платёж будет обработан автоматически\n\n"
-        "<b>Поддерживаемые форматы чеков:</b>\n"
-        "• 📷 Фотографии (JPG, PNG)\n"
-        "• 📄 PDF документы\n\n"
-        "<b>Нужна помощь?</b> Обратитесь к @sptfy_premium, если у вас есть проблемы.\n\n"
-        "💡 Используйте /start для возврата в главное меню"
+        "Если у вас есть вопросы по оплате, подписке или работе бота, "
+        "пожалуйста, напишите администратору: <b>@sptfy_premium</b>"
     )
 
     await callback.message.answer(help_text, parse_mode="HTML", reply_markup=get_user_main_menu())
@@ -315,6 +303,110 @@ async def handle_user_join(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# ── Reply keyboard button handlers ────────────────────────────────────────────
+
+@user_router.message(F.text == BTN_PAY)
+async def handle_pay_button(message: types.Message, state: FSMContext):
+    """Reply keyboard: Оплатить подписку"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    await state.clear()
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.\nПожалуйста, попробуйте позже.")
+        return
+
+    user_id = message.from_user.id
+
+    if not await db.is_user_registered(user_id):
+        await message.answer(
+            "❌ Вы ещё не зарегистрированы ни в одной группе оплаты.\n"
+            "Пожалуйста, обратитесь к администратору для добавления в группу."
+        )
+        return
+
+    statuses = await db.get_all_user_payment_statuses(user_id)
+    if not statuses:
+        await message.answer("❌ Не удается получить информацию о ваших платежах.\nПожалуйста, обратитесь к администратору.")
+        return
+
+    if len(statuses) == 1:
+        status = statuses[0]
+        await state.update_data(selected_group_id=status.group_id)
+        days_until = calculate_days_until(status.next_payment_date)
+        emoji = get_payment_status_emoji(days_until)
+        await message.answer(
+            f"💳 <b>Оплата для группы: {status.group_name}</b>\n\n"
+            f"{emoji} Следующий платёж до: {format_date(status.next_payment_date)}\n"
+            f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
+            f"Пожалуйста, выберите на сколько месяцев хотите заплатить:",
+            reply_markup=get_months_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(PaymentStates.selecting_months)
+    else:
+        builder = InlineKeyboardBuilder()
+        for s in statuses:
+            days_until = calculate_days_until(s.next_payment_date)
+            emoji = get_payment_status_emoji(days_until)
+            label = f"{s.group_name} — до {format_date(s.next_payment_date)} {emoji}"
+            builder.button(text=label, callback_data=f"pay_group_{s.group_id}")
+        builder.adjust(1)
+        await message.answer(
+            "💳 <b>Выберите группу для оплаты:</b>",
+            reply_markup=builder.as_markup(),
+            parse_mode="HTML"
+        )
+        await state.set_state(PaymentStates.selecting_group)
+
+
+@user_router.message(F.text == BTN_JOIN)
+async def handle_join_button(message: types.Message, state: FSMContext):
+    """Reply keyboard: Присоединиться к группе"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    await state.clear()
+    if not db or not db.pool:
+        await message.answer("❌ База данных в настоящее время недоступна.\nПожалуйста, попробуйте позже.")
+        return
+    user_id = message.from_user.id
+    if await db.is_user_registered(user_id):
+        await message.answer(
+            "✅ Вы уже зарегистрированы в группе!\n"
+            "Используйте /status для проверки вашего текущего статуса."
+        )
+        return
+    groups = await db.get_all_groups()
+    if not groups:
+        await message.answer(
+            "📭 Нет доступных групп для присоединения.\nПожалуйста, обратитесь к администратору."
+        )
+        return
+    await message.answer(
+        "🚪 <b>Присоединение к группе</b>\n\n"
+        "Введите ID группы, к которой хотите присоединиться:\n\n"
+        "💡 <b>Пример:</b> 001, 002, 003\n\n"
+        "❌ Отправьте <code>отмена</code> или используйте /start для отмены",
+        parse_mode="HTML"
+    )
+    await state.set_state(JoinStates.selecting_group)
+
+
+@user_router.message(F.text == BTN_HELP)
+async def handle_help_button(message: types.Message, state: FSMContext):
+    """Reply keyboard: Помощь"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+    await state.clear()
+    help_text = (
+        "🤖 <b>Справка по боту Spotify Payment</b>\n\n"
+        "Если у вас есть вопросы по оплате, подписке или работе бота, "
+        "пожалуйста, напишите администратору: <b>@sptfy_premium</b>"
+    )
+    await message.answer(help_text, parse_mode="HTML")
+
+
+# ── /help command ──────────────────────────────────────────────────────────────
+
 @user_router.message(Command("help"))
 async def help_command(message: types.Message):
     """Handle /help command"""
@@ -323,24 +415,8 @@ async def help_command(message: types.Message):
 
     help_text = (
         "🤖 <b>Справка по боту Spotify Payment</b>\n\n"
-        "<b>Доступные команды:</b>\n"
-        "🏠 /start - Приветственное сообщение и обзор статуса\n"
-        "🆔 /id - Показать ваш ID для администратора\n"
-        "🚪 /join - Присоединиться к группе оплаты\n"
-        "💳 /pay - Загрузить чек об оплате\n"
-        "📊 /status - Проверить статус ваших платежей\n"
-        "📈 /history - Показать историю платежей\n"
-        "❓ /help - Показать эту справку\n\n"
-        "<b>Как оплатить:</b>\n"
-        "1. Используйте команду /pay\n"
-        "2. Выберите количество месяцев для оплаты (1-6)\n"
-        "3. Загрузите чек банковского перевода\n"
-        "4. Платёж будет обработан автоматически\n\n"
-        "<b>Поддерживаемые форматы чеков:</b>\n"
-        "• 📷 Фотографии (JPG, PNG)\n"
-        "• 📄 PDF документы\n\n"
-        "<b>Нужна помощь?</b> Обратитесь к @sptfy_premium, если у вас есть проблемы.\n\n"
-        "💡 Используйте /start для возврата в главное меню"
+        "Если у вас есть вопросы по оплате, подписке или работе бота, "
+        "пожалуйста, напишите администратору: <b>@sptfy_premium</b>"
     )
 
     await message.answer(help_text, parse_mode="HTML", reply_markup=get_user_main_menu())

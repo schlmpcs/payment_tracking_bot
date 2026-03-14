@@ -12,7 +12,8 @@ from asyncpg import Pool
 # Database operations - settings passed from main
 from .models import (
     User, Group, Payment, PaymentStatus,
-    USERS_TABLE, GROUPS_TABLE, PAYMENTS_TABLE, USER_GROUP_TABLE, INDEXES
+    USERS_TABLE, GROUPS_TABLE, PAYMENTS_TABLE, USER_GROUP_TABLE,
+    PURCHASE_REQUESTS_TABLE, INDEXES
 )
 from ..utils.helpers import format_display_id, format_group_name, get_now
 
@@ -131,6 +132,7 @@ class Database:
                 await conn.execute(GROUPS_TABLE)
                 await conn.execute(PAYMENTS_TABLE)
                 await conn.execute(USER_GROUP_TABLE)
+                await conn.execute(PURCHASE_REQUESTS_TABLE)
 
                 # Migrate existing data to add display_ids BEFORE creating indexes
                 await self._migrate_display_ids(conn)
@@ -210,6 +212,28 @@ class Database:
         except Exception as e:
             self.logger.error(f"❌ Failed to add is_phantom column to user_groups: {e}")
             return False
+
+        # Add months_paid, amount_paid, receipt_file_id columns to purchase_requests if not present
+        try:
+            async with self.pool.acquire() as conn:
+                for col, col_type, default in [
+                    ('months_paid', 'INTEGER NOT NULL DEFAULT 1', None),
+                    ('amount_paid', 'INTEGER NOT NULL DEFAULT 0', None),
+                    ('receipt_file_id', 'TEXT', None),
+                    ('receipt_type', "VARCHAR(10) NOT NULL DEFAULT 'photo'", None),
+                ]:
+                    exists = await conn.fetchval("""
+                        SELECT EXISTS(
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'purchase_requests' AND column_name = $1
+                        )
+                    """, col)
+                    if not exists:
+                        self.logger.info(f"🔄 Adding {col} column to purchase_requests...")
+                        await conn.execute(f"ALTER TABLE purchase_requests ADD COLUMN {col} {col_type}")
+                        self.logger.info(f"✅ {col} column added to purchase_requests")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to migrate purchase_requests columns: {e}")
 
         return True
 
@@ -1559,34 +1583,39 @@ class Database:
             return []
 
     async def remove_user_from_group(self, user_id: int, group_id: int) -> bool:
-        """Remove a user from a group"""
+        """Remove a user from a group and clear their purchase requests so they can rejoin later"""
         if not self.pool:
             return False
 
         try:
             async with self.pool.acquire() as conn:
-                # Check if user is in the group
-                exists = await conn.fetchval(
-                    "SELECT COUNT(*) FROM user_groups WHERE user_id = $1 AND group_id = $2",
-                    user_id, group_id
-                )
+                async with conn.transaction():
+                    # Check if user is in the group
+                    exists = await conn.fetchval(
+                        "SELECT COUNT(*) FROM user_groups WHERE user_id = $1 AND group_id = $2",
+                        user_id, group_id
+                    )
 
-                if not exists:
-                    return False
+                    if not exists:
+                        return False
 
-                # Remove user from group
-                await conn.execute(
-                    "DELETE FROM user_groups WHERE user_id = $1 AND group_id = $2",
-                    user_id, group_id
-                )
+                    # Remove user from group
+                    await conn.execute(
+                        "DELETE FROM user_groups WHERE user_id = $1 AND group_id = $2",
+                        user_id, group_id
+                    )
 
-                self.logger.info(
-                    f"Removed user {user_id} from group {group_id}")
+                    # Delete any associated purchase requests so they can purchase again
+                    await conn.execute(
+                        "DELETE FROM purchase_requests WHERE user_id = $1",
+                        user_id
+                    )
+
+                self.logger.info(f"Removed user {user_id} from group {group_id} and cleared purchase requests")
                 return True
 
         except Exception as e:
-            self.logger.error(
-                f"Failed to remove user {user_id} from group {group_id}: {e}")
+            self.logger.error(f"Failed to remove user {user_id} from group {group_id}: {e}")
             return False
 
     async def set_user_slots(self, user_id: int, group_id: int, slots: int) -> bool:
@@ -1852,4 +1881,329 @@ class Database:
 
         except Exception as e:
             self.logger.error(f"Failed to get users paid in advance: {e}")
+            return []
+
+    # ── Purchase-request operations ──────────────────────────────────────
+
+    async def create_purchase_request(
+        self, user_id: int, region: str,
+        months_paid: int = 1, amount_paid: int = 0,
+        receipt_file_id: Optional[str] = None,
+        receipt_type: str = "photo",
+    ) -> Optional[int]:
+        """Create a new purchase request. Returns request_id."""
+        if not self.pool:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                return await conn.fetchval(
+                    "INSERT INTO purchase_requests (user_id, region, months_paid, amount_paid, receipt_file_id, receipt_type) "
+                    "VALUES ($1, $2, $3, $4, $5, $6) RETURNING request_id",
+                    user_id, region, months_paid, amount_paid, receipt_file_id, receipt_type
+                )
+        except Exception as e:
+            self.logger.error(f"Failed to create purchase request: {e}")
+            return None
+
+    async def set_purchase_request_message_id(self, request_id: int, message_id: int) -> None:
+        """Store the admin-channel message ID so we can edit it later."""
+        if not self.pool:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE purchase_requests SET admin_message_id = $1 WHERE request_id = $2",
+                    message_id, request_id
+                )
+        except Exception as e:
+            self.logger.error(f"Failed to update purchase request message id: {e}")
+
+    async def get_purchase_request(self, request_id: int) -> Optional[dict]:
+        """Return a purchase request by ID."""
+        if not self.pool:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM purchase_requests WHERE request_id = $1",
+                    request_id
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            self.logger.error(f"Failed to get purchase request {request_id}: {e}")
+            return None
+
+    async def get_pending_purchase_request_by_user(self, user_id: int) -> Optional[dict]:
+        """Return the most recent pending request for this user, or None."""
+        if not self.pool:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM purchase_requests "
+                    "WHERE user_id = $1 AND status = 'pending' "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    user_id
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            self.logger.error(f"Failed to get pending purchase request: {e}")
+            return None
+
+    async def approve_purchase_request(self, request_id: int, group_id: int) -> None:
+        """Mark a purchase request as approved and record the assigned group."""
+        if not self.pool:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE purchase_requests "
+                    "SET status = 'approved', assigned_group_id = $1, processed_at = NOW() "
+                    "WHERE request_id = $2",
+                    group_id, request_id
+                )
+        except Exception as e:
+            self.logger.error(f"Failed to approve purchase request: {e}")
+
+    async def accept_purchase_request_tx(
+        self,
+        user_id: int,
+        group_id: int,
+        request_id: int,
+        months_paid: int,
+        receipt_file_id: Optional[str] = None,
+    ) -> Tuple[bool, Optional[datetime], Optional[str]]:
+        """
+        Atomically:
+          1. Add user to group (+ phantom payment to seed next_payment_date)
+          2. Record the real payment
+          3. Mark the purchase request as approved
+
+        Returns (success, next_payment_date, error_reason).
+        """
+        if not self.pool:
+            return False, None, "error"
+
+        from bot.utils.helpers import add_months_to_date
+
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    # ── 1. user_groups ────────────────────────────────────────
+                    await conn.execute(
+                        """
+                        INSERT INTO user_groups (user_id, group_id)
+                        VALUES ($1, $2)
+                        ON CONFLICT (user_id, group_id) DO NOTHING
+                        """,
+                        user_id, group_id,
+                    )
+
+                    payment_day = await conn.fetchval(
+                        "SELECT payment_day_of_month FROM groups WHERE group_id = $1",
+                        group_id,
+                    )
+                    if payment_day is None:
+                        raise ValueError(f"Group {group_id} not found")
+
+                    # Phantom payment to seed next_payment_date
+                    current_time = get_now()
+                    current_day = current_time.day
+                    if current_day <= payment_day + 2:
+                        phantom_next = current_time.replace(day=payment_day)
+                    else:
+                        phantom_next = add_months_to_date(current_time, 1, payment_day)
+
+                    existing = await conn.fetchval(
+                        "SELECT COUNT(*) FROM payments WHERE user_id = $1 AND group_id = $2",
+                        user_id, group_id,
+                    )
+                    if existing == 0:
+                        await conn.execute(
+                            """
+                            INSERT INTO payments (user_id, group_id, months_paid, payment_date, next_payment_date, receipt_file_id)
+                            VALUES ($1, $2, 0, $3, $4, NULL)
+                            """,
+                            user_id, group_id, current_time, phantom_next,
+                        )
+
+                    # ── 2. real payment ───────────────────────────────────────
+                    row = await conn.fetchrow(
+                        """
+                        SELECT
+                            COALESCE(
+                                (SELECT next_payment_date FROM payments
+                                 WHERE user_id = $1 AND group_id = $2
+                                 ORDER BY payment_date DESC LIMIT 1),
+                                (SELECT next_payment_date FROM groups WHERE group_id = $2)
+                            ) AS previous_due_date,
+                            (SELECT payment_day_of_month FROM groups WHERE group_id = $2) AS payment_day
+                        """,
+                        user_id, group_id,
+                    )
+
+                    if row and row["previous_due_date"]:
+                        prev = row["previous_due_date"]
+                        if not isinstance(prev, datetime):
+                            prev = datetime.combine(prev, datetime.min.time())
+                        next_payment_date = add_months_to_date(prev, months_paid, row["payment_day"])
+                    else:
+                        next_payment_date = current_time + timedelta(days=30 * months_paid)
+
+                    await conn.execute(
+                        """
+                        INSERT INTO payments (user_id, group_id, months_paid, payment_date, next_payment_date, receipt_file_id)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        """,
+                        user_id, group_id, months_paid, current_time, next_payment_date, receipt_file_id,
+                    )
+
+                    # ── 3. approve request ────────────────────────────────────
+                    await conn.execute(
+                        "UPDATE purchase_requests "
+                        "SET status = 'approved', assigned_group_id = $1, processed_at = NOW() "
+                        "WHERE request_id = $2",
+                        group_id, request_id,
+                    )
+
+                    self.logger.info(
+                        f"accept_purchase_request_tx: user={user_id} group={group_id} "
+                        f"request={request_id} months={months_paid}"
+                    )
+                    return True, next_payment_date, None
+
+        except asyncpg.UniqueViolationError as e:
+            self.logger.warning(f"accept_purchase_request_tx unique violation: {e}")
+            return False, None, "duplicate"
+        except Exception as e:
+            self.logger.error(f"accept_purchase_request_tx failed: {e}")
+            return False, None, "error"
+
+    async def reject_purchase_request(self, request_id: int) -> None:
+        """Mark a purchase request as rejected."""
+        if not self.pool:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE purchase_requests "
+                    "SET status = 'rejected', processed_at = NOW() "
+                    "WHERE request_id = $1",
+                    request_id
+                )
+        except Exception as e:
+            self.logger.error(f"Failed to reject purchase request: {e}")
+
+    async def get_groups_with_available_slots(self, region: str) -> List[dict]:
+        """
+        Return groups that still have room (< 6 occupied real slots).
+
+        KZ groups: display_id starts with '0' (001, 002, …)
+        RU groups: display_id starts with '1' (101, 102, …)
+        """
+        if not self.pool:
+            return []
+        region_prefix = '0' if region.upper() == 'KZ' else '1'
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        g.group_id,
+                        g.group_name,
+                        g.display_id,
+                        COALESCE(SUM(ug.slots), 0)::int AS occupied_slots
+                    FROM groups g
+                    LEFT JOIN user_groups ug
+                        ON g.group_id = ug.group_id AND ug.is_phantom = FALSE
+                    WHERE g.display_id LIKE $1
+                    GROUP BY g.group_id, g.group_name, g.display_id
+                    HAVING COALESCE(SUM(ug.slots), 0) < 6
+                    ORDER BY g.display_id
+                    """,
+                    f"{region_prefix}%"
+                )
+                return [
+                    {
+                        'group_id': r['group_id'],
+                        'group_name': r['group_name'],
+                        'display_id': r['display_id'],
+                        'occupied_slots': r['occupied_slots'],
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            self.logger.error(f"Failed to get groups with available slots: {e}")
+            return []
+
+    async def get_group_by_id(self, group_id: int) -> Optional[Group]:
+        """Look up a group by its integer primary key."""
+        if not self.pool:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT group_id, group_name, display_id, "
+                    "payment_day_of_month, next_payment_date, created_at "
+                    "FROM groups WHERE group_id = $1",
+                    group_id
+                )
+                return Group(*row) if row else None
+        except Exception as e:
+            self.logger.error(f"Failed to get group by id {group_id}: {e}")
+            return None
+
+    async def has_user_paid_in_group(self, user_id: int, group_id: int) -> bool:
+        """Return True if the user has at least one real payment (months_paid > 0)."""
+        if not self.pool:
+            return False
+        try:
+            async with self.pool.acquire() as conn:
+                count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM payments "
+                    "WHERE user_id = $1 AND group_id = $2 AND months_paid > 0",
+                    user_id, group_id
+                )
+                return count > 0
+        except Exception as e:
+            self.logger.error(f"Failed to check payment in group: {e}")
+            return False
+
+    async def get_approved_unpaid_users(self, hours: int = 24) -> List[dict]:
+        """Get users whose purchase request was approved more than `hours` ago
+        but who have not made any real payment (months_paid > 0) in their assigned group."""
+        if not self.pool:
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        pr.request_id,
+                        pr.user_id,
+                        pr.assigned_group_id,
+                        pr.processed_at,
+                        u.username,
+                        u.first_name,
+                        g.group_name,
+                        g.display_id as group_display_id
+                    FROM purchase_requests pr
+                    JOIN users u ON pr.user_id = u.user_id
+                    JOIN groups g ON pr.assigned_group_id = g.group_id
+                    WHERE pr.status = 'approved'
+                      AND pr.assigned_group_id IS NOT NULL
+                      AND pr.processed_at < NOW() - $1 * INTERVAL '1 hour'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM payments p
+                          WHERE p.user_id = pr.user_id
+                            AND p.group_id = pr.assigned_group_id
+                            AND p.months_paid > 0
+                      )
+                    ORDER BY pr.processed_at
+                    """,
+                    hours
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            self.logger.error(f"Failed to get approved unpaid users: {e}")
             return []

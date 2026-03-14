@@ -91,6 +91,9 @@ class NotificationScheduler:
             # Send admin warnings (3 days after due date)
             await self._send_admin_warnings()
 
+            # Check for approved-but-unpaid users (24h deadline)
+            await self._check_unpaid_approved_users()
+
             self.logger.info("✅ Daily notification checks completed")
 
         except Exception as e:
@@ -319,6 +322,45 @@ class NotificationScheduler:
                     f"❌ Не удалось отправить предупреждение администратору {admin_id}: {e}")
                 # Continue with next admin even if one fails
                 continue
+
+    async def _check_unpaid_approved_users(self):
+        """Alert admins about users who were approved 24h+ ago but haven't paid."""
+        if not self.db or not self.db.pool:
+            return
+
+        unpaid = await self.db.get_approved_unpaid_users(hours=24)
+        if not unpaid:
+            self.logger.info("📭 Нет неоплаченных одобренных заявок")
+            return
+
+        self.logger.info(f"⚠️ Найдено {len(unpaid)} неоплаченных одобренных заявок")
+
+        for row in unpaid:
+            username_str = f"@{row['username']}" if row.get('username') else f"ID {row['user_id']}"
+            name = row.get('first_name') or username_str
+            group_name = row.get('group_name', f"ID {row['assigned_group_id']}")
+            hours_ago = int((get_now() - row['processed_at']).total_seconds() / 3600)
+
+            for admin_id in self.settings.tg_admin_ids:
+                try:
+                    await self.bot.send_message(
+                        chat_id=admin_id,
+                        text=(
+                            f"⚠️ <b>Оплата не поступила ({hours_ago} ч)</b>\n\n"
+                            f"👤 Пользователь: {name} ({username_str})\n"
+                            f"👥 Группа: {group_name}\n\n"
+                            f"Пользователь был добавлен в группу, но не произвёл оплату."
+                        ),
+                        parse_mode="HTML"
+                    )
+                    await asyncio.sleep(0.3)
+                except Exception as e:
+                    self.logger.error(f"Failed to send unpaid warning to admin {admin_id}: {e}")
+
+    async def check_unpaid_on_startup(self):
+        """Run once at startup to catch any missed 24h checks from before a restart."""
+        self.logger.info("🔍 Checking for missed unpaid approved users...")
+        await self._check_unpaid_approved_users()
 
     async def send_test_notifications(self):
         """Send test notifications (for debugging)"""

@@ -29,6 +29,10 @@ class Settings(BaseSettings):
         None,
         description="Chat ID for storing receipt copies (audit trail)"
     )
+    tg_admin_channel_id: Optional[int] = Field(
+        None,
+        description="Chat ID for the private admin channel that receives new subscription requests"
+    )
 
     # Database settings
     db_host: str = Field(..., description="Database host")
@@ -71,6 +75,9 @@ class Settings(BaseSettings):
     )
     bot_ru_payment_recipient: str = Field(
         "", description="Recipient name for Russia card transfers"
+    )
+    bot_support_username: str = Field(
+        "sptfy_premium", description="Telegram username of support/manager (without @)"
     )
 
     @property

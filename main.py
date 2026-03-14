@@ -15,6 +15,7 @@ from bot.config.settings import Settings
 from bot.database.operations import Database
 from bot.handlers.user import user_router, init_user_handlers
 from bot.handlers.admin import admin_router, init_admin_handlers
+from bot.handlers.buy import buy_router, init_buy_handlers
 from bot.utils.notifications import NotificationScheduler
 
 
@@ -46,6 +47,7 @@ async def main():
 
     # Include routers
     dp.include_router(admin_router)
+    dp.include_router(buy_router)
     dp.include_router(user_router)
 
     logger.info("🤖 Starting Spotify Payment Bot...")
@@ -69,6 +71,7 @@ async def main():
     # Initialize handlers with database and settings
     init_user_handlers(db, settings)
     init_admin_handlers(db, settings)
+    init_buy_handlers(db, settings)
 
     # Initialize notification scheduler
     scheduler = None
@@ -76,6 +79,9 @@ async def main():
         scheduler = NotificationScheduler(bot, db, settings)
         await scheduler.start()
         logger.info("🔔 Payment notification system started")
+
+        # Catch any missed 24h unpaid checks from before restart
+        await scheduler.check_unpaid_on_startup()
     else:
         logger.warning(
             "⚠️ Notification system disabled - database not available")

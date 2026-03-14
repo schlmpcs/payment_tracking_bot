@@ -18,6 +18,19 @@ class JoinStates(StatesGroup):
     confirming_group = State()
 
 
+class BuyStates(StatesGroup):
+    """New subscription purchase flow states"""
+    selecting_region = State()      # User picks KZ or RU
+    selecting_plan = State()        # User selects plan (months)
+    uploading_receipt = State()     # User uploads the receipt
+    entering_login = State()        # User enters Spotify email/username
+    entering_password = State()     # User enters temporary password
+    confirming_request = State()    # User reviews and confirms the summary
+    waiting_approval = State()      # Request sent; waiting for admin to assign group
+    # Admin side (state lives in admin channel chat context)
+    admin_entering_group_id = State()  # Admin typing group ID after Accept
+
+
 class AdminStates(StatesGroup):
     """Admin operation states"""
     creating_group = State()

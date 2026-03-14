@@ -101,6 +101,23 @@ CREATE TABLE IF NOT EXISTS user_groups (
 );
 """
 
+PURCHASE_REQUESTS_TABLE = """
+CREATE TABLE IF NOT EXISTS purchase_requests (
+    request_id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    region VARCHAR(5) NOT NULL,
+    months_paid INTEGER NOT NULL DEFAULT 1,
+    amount_paid INTEGER NOT NULL DEFAULT 0,
+    receipt_file_id TEXT,
+    receipt_type VARCHAR(10) NOT NULL DEFAULT 'photo',
+    admin_message_id INTEGER,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    assigned_group_id INTEGER REFERENCES groups(group_id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    processed_at TIMESTAMP
+);
+"""
+
 INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);",
     "CREATE INDEX IF NOT EXISTS idx_payments_group_id ON payments(group_id);",
@@ -108,5 +125,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_user_groups_user_id ON user_groups(user_id);",
     "CREATE INDEX IF NOT EXISTS idx_user_groups_group_id ON user_groups(group_id);",
     "CREATE INDEX IF NOT EXISTS idx_users_display_id ON users(display_id);",
-    "CREATE INDEX IF NOT EXISTS idx_groups_display_id ON groups(display_id);"
+    "CREATE INDEX IF NOT EXISTS idx_groups_display_id ON groups(display_id);",
+    "CREATE INDEX IF NOT EXISTS idx_purchase_requests_user_id ON purchase_requests(user_id);",
+    "CREATE INDEX IF NOT EXISTS idx_purchase_requests_status ON purchase_requests(status);"
 ]
