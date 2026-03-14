@@ -208,7 +208,11 @@ def get_payment_info(region: str, settings: Settings) -> dict:
                 f"💳 <b>Перевод на карту:</b>\n\n"
                 f"🏦 Банк: {settings.bot_ru_payment_bank}\n"
                 f"💳 Карта: <code>{settings.bot_ru_payment_card}</code>\n"
-                f"👤 Получатель: {settings.bot_ru_payment_recipient}"
+                f"👤 Получатель: {settings.bot_ru_payment_recipient}\n\n"
+                f"— или —\n\n"
+                f"📱 <b>Если вы хотите оплатить через СБП:</b>\n\n"
+                f"📞 Номер: <code>{settings.bot_ru_payment_sbp_number}</code>\n"
+                f"🏦 Банк: VTB"
             )
         }
     else:

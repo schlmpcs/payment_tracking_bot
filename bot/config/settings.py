@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     bot_ru_payment_recipient: str = Field(
         "", description="Recipient name for Russia card transfers"
     )
+    bot_ru_payment_sbp_number: str = Field(
+        "", description="Phone number for Russia SBP (Fast Payment System) transfers"
+    )
 
     @property
     def database_dsn(self) -> str:
