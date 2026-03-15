@@ -9,5 +9,8 @@ echo "Rebuilding and restarting containers..."
 docker compose down
 docker compose up -d --build
 
+echo "Removing dangling images..."
+docker image prune -f
+
 echo "Deploy complete. Logs:"
 docker compose logs -f
