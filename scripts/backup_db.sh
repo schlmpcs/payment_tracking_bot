@@ -17,10 +17,17 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-set -a
-# shellcheck source=/dev/null
-source "$ENV_FILE"
-set +a
+while IFS= read -r line || [[ -n "$line" ]]; do
+  [[ "$line" =~ ^[[:space:]]*# ]] && continue   # skip comments
+  [[ -z "${line// }" ]] && continue              # skip blank lines
+  if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    value="${value%\"}" ; value="${value#\"}"     # strip double quotes
+    value="${value%\'}" ; value="${value#\'}"     # strip single quotes
+    export "$key"="$value"
+  fi
+done < "$ENV_FILE"
 
 # Validate required variables
 for var in DB_HOST DB_PORT DB_USERNAME DB_PASSWORD DB_DATABASE TG_TOKEN TG_ADMIN_IDS; do
