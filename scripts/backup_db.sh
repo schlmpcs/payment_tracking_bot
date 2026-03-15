@@ -17,7 +17,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-export $(grep -v '^#' "$ENV_FILE" | grep -v '^$' | xargs)
+set -a
+# shellcheck source=/dev/null
+source "$ENV_FILE"
+set +a
 
 # Validate required variables
 for var in DB_HOST DB_PORT DB_USERNAME DB_PASSWORD DB_DATABASE TG_TOKEN TG_ADMIN_IDS; do
