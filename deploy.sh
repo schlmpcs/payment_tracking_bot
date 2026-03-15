@@ -6,8 +6,8 @@ echo "Pulling latest code..."
 git pull
 
 echo "Rebuilding and restarting containers..."
-docker-compose down
-docker-compose up -d --build
+docker compose down
+docker compose up -d --build
 
 echo "Deploy complete. Logs:"
-docker-compose logs -f
+docker compose logs -f
