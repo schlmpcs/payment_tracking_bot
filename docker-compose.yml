@@ -1,4 +1,4 @@
-# Docker Compose for local development and testing
+# Docker Compose for production deployment
 version: '3.8'
 
 services:
@@ -10,5 +10,16 @@ services:
     restart: unless-stopped
     volumes:
       - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  backup:
+    build: .
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./backups:/app/backups
+    command: bash /app/scripts/run_backup_cron.sh
     environment:
       - PYTHONUNBUFFERED=1

@@ -138,6 +138,9 @@ user_data/
 receipts/
 uploads/
 
+# Database backups
+backups/
+
 # Local audit / personal notes (not for version control)
 AUDIT.md
 AGENT_CONTEXT.md

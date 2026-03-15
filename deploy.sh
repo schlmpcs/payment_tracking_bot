@@ -1,17 +1,13 @@
 #!/bin/bash
+# Run this on the server to deploy the latest version
+set -euo pipefail
 
-# Stop the current bot safely
-echo "🛑 Stopping current bot..."
-docker-compose down
-
-# Pull the latest code
-echo "⬇️ Pulling latest code..."
+echo "Pulling latest code..."
 git pull
 
-# Rebuild and start
-echo "🚀 Rebuilding and starting..."
+echo "Rebuilding and restarting containers..."
+docker-compose down
 docker-compose up -d --build
 
-# Show logs
-echo "📋 Showing logs (Ctrl+C to exit)..."
+echo "Deploy complete. Logs:"
 docker-compose logs -f
