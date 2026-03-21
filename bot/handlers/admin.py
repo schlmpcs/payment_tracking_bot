@@ -563,32 +563,11 @@ async def update_due_date_command(message: types.Message, state: FSMContext):
         await message.answer("❌ База данных в настоящее время недоступна.")
         return
 
-    # Show available groups
-    groups = await db.get_all_groups()
-    if not groups:
-        await message.answer("❌ Нет доступных групп.")
-        return
-
-    groups_text = "📅 <b>Обновить дату платежа группы</b>\n\n"
-    groups_text += "Доступные группы:\n\n"
-
-    for group in groups:
-        days_until = calculate_days_until(group.next_payment_date)
-        status_emoji = get_payment_status_emoji(days_until)
-
-    for group in groups:
-        days_until = calculate_days_until(group.next_payment_date)
-        status_emoji = get_payment_status_emoji(days_until)
-
-        groups_text += (
-            f"{status_emoji} <b>{group.group_name}</b> (ID: {group.display_id})\n"
-            f"📅 Текущая дата платежа: {format_date(group.next_payment_date)}\n"
-            f"📊 Статус: {get_payment_status_text(days_until)}\n\n"
-        )
-
-    groups_text += "Пожалуйста, введите название группы или ID (например: 'spotify 001' или '001'):"
-
-    await message.answer(groups_text, parse_mode="HTML")
+    await message.answer(
+        "📅 <b>Обновить дату платежа группы</b>\n\n"
+        "Введите название группы или ID (например: <code>spotify 001</code> или <code>001</code>):",
+        parse_mode="HTML"
+    )
     await state.set_state(AdminStates.updating_due_date_group)
 
 
@@ -782,32 +761,6 @@ async def view_groups_page(callback: types.CallbackQuery, page: int = 0):
         page, total_pages, "view_groups", show_back=True)
 
     await callback.message.edit_text(response, parse_mode="HTML", reply_markup=keyboard)
-    await callback.answer()
-
-
-@admin_router.callback_query(F.data == "admin_import_groups")
-async def import_groups_start(callback: types.CallbackQuery, state: FSMContext):
-    """Start group import process"""
-    user_id = callback.from_user.id
-    if not is_admin(user_id, settings.tg_admin_ids):
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
-
-    await state.set_state(AdminStates.importing_groups_file)
-    await callback.message.edit_text(
-        "📊 <b>Импорт групп из Excel файла</b>\n\n"
-        "Отправьте Excel файл (.xlsx) с данными для импорта групп.\n\n"
-        "<b>Формат файла:</b>\n"
-        "• Столбец A: Названия групп (например: spotify 001)\n"
-        "• Столбец B: ID групп (например: 001)\n\n"
-        "<b>Пример:</b>\n"
-        "<pre>\n"
-        "spotify 001 | 001\n"
-        "spotify 002 | 002\n"
-        "</pre>\n\n"
-        "📎 Прикрепите файл к следующему сообщению или используйте /admin для отмены:",
-        parse_mode="HTML"
-    )
     await callback.answer()
 
 
@@ -1121,13 +1074,11 @@ async def update_due_date_get_date(message: types.Message, state: FSMContext):
     await state.update_data(group=group)
 
     await message.answer(
-        f"📅 <b>Update Due Date for {group.group_name}</b>\n\n"
-        f"Current due date: {format_date(group.next_payment_date)}\n\n"
-        f"Please enter the new due date in format: <b>YYYY-MM-DD</b>\n\n"
-        f"Examples:\n"
-        f"• <code>2025-11-15</code> (November 15, 2025)\n"
-        f"• <code>2025-12-01</code> (December 1, 2025)\n\n"
-        f"💡 <i>Используйте /admin для отмены операции</i>",
+        f"📅 <b>Обновить дату платежа: {group.group_name}</b>\n\n"
+        f"Текущая дата: {format_date(group.next_payment_date)}\n\n"
+        f"Введите новую дату в формате <b>ДД.ММ.ГГГГ</b>\n"
+        f"Например: <code>15.11.2025</code>\n\n"
+        f"💡 <i>Используйте /admin для отмены</i>",
         parse_mode="HTML"
     )
 
@@ -1573,252 +1524,6 @@ async def test_receipt_storage_command(message: types.Message):
         )
 
         logger.error(f"Receipt storage test failed: {e}")
-
-
-@admin_router.message(Command("import_groups"))
-async def import_groups_command(message: types.Message, state: FSMContext):
-    """Handle /import_groups command for bulk group creation from Excel"""
-    if message.chat.type != ChatType.PRIVATE:
-        return
-
-    user_id = message.from_user.id
-    if not is_admin(user_id, settings.tg_admin_ids):
-        await message.answer("❌ Доступ запрещён. Команда только для администраторов.")
-        return
-
-    if not db or not db.pool:
-        await message.answer("❌ База данных в настоящее время недоступна.")
-        return
-
-    await state.set_state(AdminStates.importing_groups_file)
-    await message.answer(
-        "📊 <b>Импорт групп из Excel файла</b>\n\n"
-        "Отправьте Excel файл (.xlsx) с данными для импорта групп.\n\n"
-        "<b>Формат файла:</b>\n"
-        "• Столбец A: Названия групп (например: spotify 001)\n"
-        "• Столбец B: ID групп (например: 001)\n\n"
-        "<b>Пример:</b>\n"
-        "<pre>\n"
-        "spotify 001 | 001\n"
-        "spotify 002 | 002\n"
-        "</pre>\n\n"
-        "📎 Прикрепите файл к следующему сообщению:",
-        parse_mode="HTML"
-    )
-
-
-@admin_router.message(AdminStates.importing_groups_file, F.document)
-async def handle_import_file(message: types.Message, state: FSMContext):
-    """Handle Excel file upload for group import"""
-    file_path = None
-    try:
-        if not message.document:
-            await message.answer("❌ Пожалуйста, отправьте файл.")
-            return
-
-        # Check file extension
-        file_name = message.document.file_name
-        if not file_name or not file_name.lower().endswith('.xlsx'):
-            await message.answer(
-                "❌ Неподдерживаемый формат файла.\n"
-                "Пожалуйста, отправьте Excel файл (.xlsx)."
-            )
-            return
-
-        # Check file size (limit to 10MB)
-        if message.document.file_size > 10 * 1024 * 1024:
-            await message.answer("❌ Файл слишком большой. Максимальный размер: 10 MB.")
-            return
-
-        await message.answer("⏳ Обработка файла...")
-
-        # Download file
-        file = await message.bot.get_file(message.document.file_id)
-
-        # Create temporary file with proper extension
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as temp_file:
-            file_path = temp_file.name
-
-        await message.bot.download_file(file.file_path, file_path)
-
-        # Parse Excel file
-        from openpyxl import load_workbook
-
-        try:
-            workbook = load_workbook(file_path)
-            sheet = workbook.active
-
-            groups_data = []
-            errors = []
-
-            for row_num, row in enumerate(sheet.iter_rows(min_row=1, values_only=True), 1):
-                if not row or len(row) < 2:
-                    continue
-
-                group_name = str(row[0]).strip() if row[0] else ""
-                group_id = str(row[1]).strip() if row[1] else ""
-
-                # Skip header row (if first row contains non-numeric ID)
-                if row_num == 1 and not group_id.isdigit():
-                    continue
-
-                if not group_name or not group_id:
-                    errors.append(f"Строка {row_num}: пустые данные")
-                    continue
-
-                # Validate group ID format (should be 3 digits)
-                if not group_id.isdigit() or len(group_id) != 3:
-                    errors.append(
-                        f"Строка {row_num}: ID должен быть 3-значным числом")
-                    continue
-
-                groups_data.append({
-                    'name': group_name,
-                    'display_id': group_id,  # Keep as string for VARCHAR(10)
-                    'row': row_num
-                })
-
-            if not groups_data:
-                await message.answer("❌ В файле не найдено валидных данных для импорта.")
-                await state.clear()
-                return
-
-            # Check for duplicate IDs in file
-            display_ids = [group['display_id'] for group in groups_data]
-            if len(display_ids) != len(set(display_ids)):
-                errors.append("Обнаружены дублирующиеся ID в файле")
-
-            # Check for existing groups in database
-            existing_display_ids = []
-            for group_data in groups_data:
-                existing_group = await db.get_group_by_display_id(group_data['display_id'])
-                if existing_group:
-                    existing_display_ids.append(group_data['display_id'])
-
-            if existing_display_ids:
-                errors.append(
-                    f"ID уже существуют в базе: {', '.join(map(str, existing_display_ids))}")
-
-            # Store data for confirmation
-            await state.update_data(groups_data=groups_data, errors=errors)
-
-            # Show preview
-            preview_text = "📋 <b>Предварительный просмотр импорта:</b>\n\n"
-            preview_text += f"✅ Найдено групп для импорта: {len(groups_data)}\n\n"
-
-            if errors:
-                preview_text += f"⚠️ <b>Ошибки ({len(errors)}):</b>\n"
-                for error in errors[:5]:  # Show first 5 errors
-                    preview_text += f"• {error}\n"
-                if len(errors) > 5:
-                    preview_text += f"• ... и ещё {len(errors) - 5} ошибок\n"
-                preview_text += "\n"
-
-            if groups_data and not errors:
-                preview_text += "<b>Группы для создания:</b>\n"
-                for i, group in enumerate(groups_data[:10]):  # Show first 10
-                    preview_text += f"• {group['name']} (ID: {group['display_id']})\n"
-                if len(groups_data) > 10:
-                    preview_text += f"• ... и ещё {len(groups_data) - 10} групп\n"
-
-                await state.set_state(AdminStates.importing_groups_confirm)
-
-                # Create custom keyboard for import confirmation
-                builder = InlineKeyboardBuilder()
-                builder.row(
-                    types.InlineKeyboardButton(
-                        text="✅ Да", callback_data="confirm_yes", style="success"),
-                    types.InlineKeyboardButton(
-                        text="❌ Нет", callback_data="confirm_no", style="danger")
-                )
-
-                await message.answer(
-                    preview_text,
-                    parse_mode="HTML",
-                    reply_markup=builder.as_markup()
-                )
-            else:
-                await message.answer(
-                    preview_text + "\n❌ Импорт невозможен из-за ошибок в данных.",
-                    parse_mode="HTML"
-                )
-                await state.clear()
-
-        except Exception as e:
-            logger.error(f"Error parsing Excel file: {e}")
-            await message.answer(
-                "❌ Ошибка при обработке файла.\n"
-                "Убедитесь, что файл не повреждён и соответствует требуемому формату."
-            )
-            await state.clear()
-
-        finally:
-            # Clean up temp file
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.unlink(file_path)
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"Failed to cleanup temp file {file_path}: {cleanup_error}")
-
-    except Exception as e:
-        logger.error(f"Error in handle_import_file: {e}")
-        await message.answer("❌ Произошла ошибка при обработке файла.")
-        await state.clear()
-        # Cleanup file if it exists
-        if 'file_path' in locals() and file_path and os.path.exists(file_path):
-            try:
-                os.unlink(file_path)
-            except:
-                pass
-
-
-@admin_router.message(AdminStates.importing_groups_file)
-async def handle_import_file_invalid(message: types.Message):
-    """Handle invalid file uploads during import"""
-    await message.answer(
-        "❌ Пожалуйста, отправьте Excel файл (.xlsx).\n"
-        "Или используйте /admin для отмены операции."
-    )
-
-
-@admin_router.callback_query(AdminStates.importing_groups_confirm, F.data == "confirm_yes")
-async def confirm_import_groups(callback: types.CallbackQuery, state: FSMContext):
-    """Confirm and execute group import"""
-    try:
-        data = await state.get_data()
-        groups_data = data.get('groups_data', [])
-
-        if not groups_data:
-            await callback.message.edit_text("❌ Данные для импорта не найдены.")
-            await state.clear()
-            return
-
-        await callback.message.edit_text("⏳ Импорт групп в процессе...")
-
-        # Import groups
-        success_count = await db.bulk_import_groups(groups_data)
-
-        await callback.message.edit_text(
-            f"✅ <b>Импорт завершён!</b>\n\n"
-            f"Успешно создано групп: {success_count} из {len(groups_data)}\n\n"
-            f"Используйте /admin для управления группами.",
-            parse_mode="HTML"
-        )
-
-    except Exception as e:
-        logger.error(f"Error in confirm_import_groups: {e}")
-        await callback.message.edit_text("❌ Произошла ошибка при импорте групп.")
-
-    finally:
-        await state.clear()
-
-
-@admin_router.callback_query(AdminStates.importing_groups_confirm, F.data == "confirm_no")
-async def cancel_import_groups(callback: types.CallbackQuery, state: FSMContext):
-    """Cancel group import"""
-    await callback.message.edit_text("❌ Импорт групп отменён.")
-    await state.clear()
 
 
 @admin_router.callback_query(F.data == "admin_delete_group")
@@ -2444,84 +2149,6 @@ async def fraud_check_process(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-@admin_router.message(Command("backfill_receipts"))
-async def backfill_receipts_command(message: types.Message):
-    """Backfill missing receipt numbers from files (Feb 2026+)"""
-    if message.chat.type != ChatType.PRIVATE:
-        return
-
-    user_id = message.from_user.id
-    if not is_admin(user_id, settings.tg_admin_ids):
-        await message.answer("❌ Доступ запрещён.")
-        return
-
-    await message.answer("⏳ Начинаю сканирование старых чеков (с 01.02.2026)...")
-    
-    try:
-        # Get candidates: KZ payments (0%), since Feb 1st, with file but no op number
-        candidates = await db.get_payments_without_op_number(region='kz', start_date='2026-02-01')
-        
-        if not candidates:
-            await message.answer("✅ Нет чеков для обработки.")
-            return
-
-        total = len(candidates)
-        await message.answer(f"Найдено {total} чеков. Обработка...")
-        
-        import tempfile
-        import os
-        from bot.utils.receipt_parser import parse_kaspi_receipt
-        
-        updated_count = 0
-        failed_count = 0
-        
-        for i, p in enumerate(candidates, 1):
-            try:
-                # Progress update every 5 items
-                if i % 5 == 0:
-                   await message.bot.send_chat_action(message.chat.id, "typing")
-                   
-                file_id = p['receipt_file_id']
-                payment_id = p['payment_id']
-                
-                # Download
-                file = await message.bot.get_file(file_id)
-                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
-                    temp_name = temp_file.name
-                
-                await message.bot.download_file(file.file_path, temp_name)
-                
-                # Parse
-                op_number = parse_kaspi_receipt(temp_name)
-                
-                try:
-                    os.remove(temp_name)
-                except OSError:
-                    pass
-                
-                if op_number:
-                    await db.update_payment_op_number(payment_id, op_number)
-                    updated_count += 1
-                else:
-                    failed_count += 1
-                    
-            except Exception as e:
-                logger.error(f"Backfill error payment {p.get('payment_id')}: {e}")
-                failed_count += 1
-
-        await message.answer(
-            f"🏁 <b>Обработка завершена</b>\n\n"
-            f"Всего: {total}\n"
-            f"✅ Распознано: {updated_count}\n"
-            f"❌ Не распознано: {failed_count}",
-            parse_mode="HTML"
-        )
-
-    except Exception as e:
-        logger.error(f"Backfill fatal error: {e}")
-        await message.answer(f"❌ Критическая ошибка: {e}")
-
-
 # ──────────────────────────────────────────────
 # /setslots — set number of accounts (slots) for a user in a group
 # ──────────────────────────────────────────────
@@ -2744,12 +2371,10 @@ async def cmd_adminhelp(message: types.Message):
         "/overdue — показать пользователей с просрочкой 3+ дней (под отключение)\n"
         "/paid_in_advance — показать пользователей, оплативших вперёд\n"
         "/update_due_date — обновить дату следующего платежа для группы\n"
-        "/import_groups — импортировать группы из файла\n"
         "\n"
         "<b>— Проверки —</b>\n"
         "/fraudcheck — проверка дублей платежей по выписке Kaspi (KZ)\n"
         "/fraudcheck_ru — сверка платежей RU по дате (количество + сумма)\n"
-        "/backfill_receipts — восстановить номера чеков из файлов\n"
         "/fixusers — исправить повреждённые имена пользователей через Telegram\n"
         "\n"
         "<b>— Уведомления (тест) —</b>\n"

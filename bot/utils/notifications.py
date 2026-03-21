@@ -76,7 +76,7 @@ class NotificationScheduler:
                 # Wait 1 hour before retrying on error
                 await asyncio.sleep(3600)
 
-    async def _run_notification_checks(self, include_groups: bool = True):
+    async def _run_notification_checks(self, include_groups: bool = True, include_admins: bool = True):
         """Run all notification checks"""
         self.logger.info("🔍 Running daily notification checks...")
 
@@ -89,7 +89,8 @@ class NotificationScheduler:
                 await self._send_group_reminders()
 
             # Send admin warnings (3 days after due date)
-            await self._send_admin_warnings()
+            if include_admins:
+                await self._send_admin_warnings()
 
             self.logger.info("✅ Daily notification checks completed")
 
@@ -321,6 +322,6 @@ class NotificationScheduler:
                 continue
 
     async def send_test_notifications(self):
-        """Send test notifications (for debugging)"""
+        """Send test notifications (for debugging) — users only, no groups or admins"""
         self.logger.info("🧪 Отправка тестовых уведомлений...")
-        await self._run_notification_checks(include_groups=False)
+        await self._run_notification_checks(include_groups=False, include_admins=False)
