@@ -29,7 +29,7 @@ class AdminStates(StatesGroup):
     removing_user_select_user = State()
     updating_due_date_group = State()
     updating_due_date_date = State()
-fraud_check_date = State()
+    fraud_check_date = State()
     fraud_check_file = State()
     broadcasting_message = State()
     broadcasting_confirm = State()
