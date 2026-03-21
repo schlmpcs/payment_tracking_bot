@@ -2132,10 +2132,18 @@ async def remove_user_from_group(message: types.Message, state: FSMContext):
     if not is_admin(user_id, settings.tg_admin_ids):
         return
 
+    if message.text and message.text.strip().lower() in ('/admin', '/cancel'):
+        await state.clear()
+        await message.answer("✅ Управление участниками завершено. Используйте /admin для панели.")
+        return
+
     try:
         target_user_id = int(message.text.strip())
     except ValueError:
-        await message.answer("❌ Неверный формат ID. Введите числовой Telegram ID пользователя.")
+        await message.answer(
+            "❌ Неверный формат ID. Введите числовой Telegram ID пользователя.\n"
+            "Используйте /admin для выхода."
+        )
         return
 
     data = await state.get_data()
@@ -2153,7 +2161,8 @@ async def remove_user_from_group(message: types.Message, state: FSMContext):
 
     if not target_member:
         await message.answer(
-            f"❌ Пользователь с ID {target_user_id} не найден в группе {group.group_name}."
+            f"❌ Пользователь с ID {target_user_id} не найден в группе {group.group_name}.\n\n"
+            f"Введите другой ID или /admin для выхода."
         )
         return
 
@@ -2175,8 +2184,39 @@ async def remove_user_from_group(message: types.Message, state: FSMContext):
             f"Не удалось удалить пользователя из группы.",
             parse_mode="HTML"
         )
+        return
 
-    await state.clear()
+    # Re-fetch and show updated member list so admin can continue
+    members = await db.get_group_members(group.group_id)
+
+    if not members:
+        await message.answer(
+            f"📭 <b>Группа {group.group_name} теперь пуста.</b>\n\n"
+            f"Используйте /admin для возврата в меню.",
+            parse_mode="HTML"
+        )
+        await state.clear()
+        return
+
+    from html import escape
+    members_text = (
+        f"👥 <b>Участники группы {group.group_name}</b> (осталось: {len(members)})\n\n"
+    )
+    for member in members:
+        last_payment = "Никогда" if not member['last_payment'] else member['last_payment'].strftime('%Y-%m-%d')
+        username_display = f"@{escape(member['username'])}" if member['username'] else 'нет username'
+        first_name = escape(member['first_name'] or 'N/A')
+        slots = member.get('slots', 1)
+        slots_line = f"🔢 Слотов: {slots}\n" if slots > 1 else ""
+        members_text += (
+            f"👤 <b>{first_name}</b> ({username_display})\n"
+            f"🆔 ID: {member['display_id']} | Telegram ID: <code>{member['user_id']}</code>\n"
+            f"💳 Платежей: {member['total_payments']} | Последний: {last_payment}\n"
+            f"{slots_line}\n"
+        )
+    members_text += "Введите Telegram ID следующего участника для удаления или /admin для выхода:"
+
+    await message.answer(members_text, parse_mode="HTML")
 
 
 @admin_router.callback_query(F.data == "back_to_admin_menu")
