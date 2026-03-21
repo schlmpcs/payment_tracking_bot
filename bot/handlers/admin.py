@@ -167,6 +167,7 @@ async def broadcast_command(message: types.Message, state: FSMContext):
     builder.button(text="🌍 Все пользователи", callback_data="broadcast_target_all")
     builder.button(text="🇰🇿 Казахстан (KZ)", callback_data="broadcast_target_kz")
     builder.button(text="🇷🇺 Россия (RU)", callback_data="broadcast_target_ru")
+    builder.button(text="👥 Группа", callback_data="broadcast_target_group")
     builder.adjust(1)
 
     await message.answer(
@@ -181,7 +182,19 @@ async def broadcast_command(message: types.Message, state: FSMContext):
 @admin_router.callback_query(F.data.startswith("broadcast_target_"), StateFilter(AdminStates.broadcasting_message))
 async def broadcast_target_selection(callback: types.CallbackQuery, state: FSMContext):
     """Handle broadcast target selection"""
-    target = callback.data.split("_")[-1]  # all, kz, ru
+    target = callback.data.split("_")[-1]  # all, kz, ru, group
+
+    if target == "group":
+        await state.update_data(broadcast_target="group")
+        await callback.message.edit_text(
+            "📢 <b>Рассылка: Конкретная группа</b>\n\n"
+            "Введите название или номер группы (например: <code>spotify 112</code> или <code>112</code>):\n\n"
+            "❌ Отправьте /cancel для отмены.",
+            parse_mode="HTML"
+        )
+        await state.set_state(AdminStates.broadcasting_select_group)
+        await callback.answer()
+        return
 
     target_names = {
         'all': "Все пользователи",
@@ -200,6 +213,43 @@ async def broadcast_target_selection(callback: types.CallbackQuery, state: FSMCo
     )
     await state.set_state(AdminStates.broadcasting_message)
     await callback.answer()
+
+
+@admin_router.message(StateFilter(AdminStates.broadcasting_select_group))
+async def broadcast_group_input(message: types.Message, state: FSMContext):
+    """Handle group name/ID input for group-targeted broadcast"""
+    if message.chat.type != ChatType.PRIVATE:
+        return
+
+    if message.text and message.text.startswith('/cancel'):
+        await state.clear()
+        await message.answer("❌ Рассылка отменена.")
+        return
+
+    identifier = message.text.strip() if message.text else ""
+    if not identifier:
+        await message.answer("⚠️ Пожалуйста, введите название или номер группы.")
+        return
+
+    group = await db.get_group_by_name_or_id(identifier)
+    if not group:
+        await message.answer(
+            f"❌ Группа <code>{identifier}</code> не найдена.\n"
+            "Попробуйте ещё раз или отправьте /cancel для отмены.",
+            parse_mode="HTML"
+        )
+        return
+
+    await state.update_data(broadcast_group_id=group.group_id, broadcast_group_name=group.group_name)
+
+    await message.answer(
+        f"📢 <b>Рассылка: {group.group_name}</b>\n\n"
+        f"Теперь отправьте сообщение, которое вы хотите разослать.\n"
+        f"Поддерживается текст, фото и форматирование.\n\n"
+        f"❌ Отправьте /cancel для отмены.",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminStates.broadcasting_message)
 
 
 @admin_router.message(StateFilter(AdminStates.broadcasting_message))
@@ -239,7 +289,8 @@ async def broadcast_message_input(message: types.Message, state: FSMContext):
     target_names = {
         'all': "Все пользователи",
         'kz': "Казахстан (KZ)",
-        'ru': "Россия (RU)"
+        'ru': "Россия (RU)",
+        'group': data.get('broadcast_group_name', 'Группа')
     }
 
     await message.answer(
@@ -279,7 +330,11 @@ async def broadcast_confirmation_handler(callback: types.CallbackQuery, state: F
         )
 
         try:
-            users = await db.get_users_by_region(target)
+            if target == "group":
+                group_id = data.get('broadcast_group_id')
+                users = await db.get_users_by_group(group_id)
+            else:
+                users = await db.get_users_by_region(target)
 
             if not users:
                 await callback.message.edit_text("❌ Пользователи не найдены для выбранной категории.")
